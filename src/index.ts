@@ -108,6 +108,13 @@ const RESYNC_GAP_MS = 1000;
 const POS_RATE = 30;
 /** Emotes one Mower may send per second. */
 const EMOTE_RATE = 2;
+/**
+ * Mowers one address may have on the Lawn at once. Every socket earns its own
+ * travel, so one person with many sockets cuts what many visitors cut. This
+ * is the only thing that tells them apart, and it is a blunt one: a house, an
+ * office and a whole mobile network each look like one address.
+ */
+const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
@@ -194,13 +201,22 @@ export class Lawn extends DurableObject {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
+    // The address is a tag on the socket, not a note in memory: the Lawn can
+    // then count the Mowers of one address with an index, and the count stays
+    // right when the Lawn hibernates. Cloudflare writes this header itself, so
+    // a client cannot claim another address.
+    const address = request.headers.get("CF-Connecting-IP") ?? "";
+    if (address && this.mowersAt(address) >= MOWERS_PER_ADDRESS) {
+      return new Response("too many mowers from here", { status: 429 });
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
     // Hibernation: the Lawn sleeps between Mow Strokes and the sockets survive.
     // The id rides on the socket, so it survives hibernation too.
     const id = crypto.randomUUID().slice(0, 8);
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, address ? [address] : []);
     server.serializeAttachment({ id });
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
@@ -274,7 +290,7 @@ export class Lawn extends DurableObject {
     if (!from) {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
-      this.places.set(ws, { x, y });
+      this.seed(ws, x, y);
       return;
     }
 
@@ -397,6 +413,24 @@ export class Lawn extends DurableObject {
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
   }
 
+  /** How many Mowers one address has on the Lawn now. */
+  private mowersAt(address: string): number {
+    return this.ctx
+      .getWebSockets(address)
+      .filter((ws) => ws.readyState === WebSocket.READY_STATE_OPEN).length;
+  }
+
+  /**
+   * Put a Mower on the Lawn where it says it is, with no travel banked. A
+   * fresh socket must earn its travel exactly like the Mower before it:
+   * without this a Mower could reconnect for a full bank, cut a long swath at
+   * once, drop the socket and come straight back for another.
+   */
+  private seed(ws: WebSocket, x: number, y: number): void {
+    this.places.set(ws, { x, y });
+    this.travelBudgets.set(ws, { tokens: 0, refilledAt: Date.now() });
+  }
+
   /**
    * Move a Mower from where the Lawn holds it towards where it says it is,
    * and no further than its travel allows. The answer is the far end of the
@@ -427,7 +461,7 @@ export class Lawn extends DurableObject {
   private within(ws: WebSocket, x: number, y: number): Place {
     const place = this.places.get(ws);
     if (!place) {
-      this.places.set(ws, { x, y });
+      this.seed(ws, x, y);
       return { x, y };
     }
     const dx = x - place.x;
