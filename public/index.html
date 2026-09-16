@@ -73,7 +73,12 @@
     position: fixed; right: 24px; top: clamp(100px, 22vh, 190px); z-index: 10; width: 260px;
     pointer-events: none; color: #e6dfcc; text-shadow: 0 1px 2px #090e09;
     isolation: isolate;
+    transition: opacity .18s ease, transform .18s ease;
   }
+  /* The big map is read across the whole screen, and the tracker stands over
+     the right of it. It steps aside while the map is open, the way it already
+     stands down for the field banner: both say the same thing as the map. */
+  body.map-open #world-quests { opacity: 0; transform: translateX(18px); visibility: hidden; }
   #world-quests::before {
     content: ''; position: absolute; inset: 20px -10px -14px; z-index: -1; pointer-events: none;
     background: #11190fc9;
@@ -279,7 +284,7 @@
 <canvas id="hud"></canvas>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
-<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold Tab for the board · the blades are always down</div>
+<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold M for the map · hold Tab for the board · the blades are always down</div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -308,7 +313,7 @@
 
 <script type="module">
 import { initialScore, updateScore } from '/score.js';
-import { fieldAt, createFieldQuests } from '/fields.js';
+import { fieldAt, FIELD_NAMES, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
 /* ------------------------------------------------------------------ *
  * The Lawn: one shared field, one Durable Object, many Mowers.
@@ -700,12 +705,39 @@ function sendEmote(i) {
   if (connected) send({ t: "emote", e: i });
 }
 
+/**
+ * Hold M to open the big map. It is held, like the board, so a hand that
+ * leaves the keys always leaves the Lawn in view. The map grows into place
+ * over the Lawn rather than replace it in one frame: `mapAt` is when it last
+ * changed its mind, and every frame reads the shift from the clock.
+ */
+const MAP_MS = 190;
+let mapOpen = false, mapAt = -MAP_MS;
+
+/** How far out the big map is, from 0 (away) to 1 (open). */
+function mapShift() {
+  if (reducedMotion.matches) return mapOpen ? 1 : 0;
+  const t = Math.min(1, (performance.now() - mapAt) / MAP_MS);
+  const eased = t * t * (3 - 2 * t);
+  return mapOpen ? eased : 1 - eased;
+}
+
+function showMap(open) {
+  if (open === mapOpen) return;
+  // A map sent back half open goes back from where it stands, not from the end.
+  const from = mapShift();
+  mapOpen = open;
+  mapAt = performance.now() - MAP_MS * (open ? from : 1 - from);
+  document.body.classList.toggle("map-open", open);
+}
+
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   keys.add(k);
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
   if (k === "tab") openBoard();
+  else if (k === "m") showMap(true);
   else if (k === " ") { pickerOpen = true; pickerAt = performance.now(); }
   else if (pickerOpen && (k === "a" || k === "arrowleft")) pickerPick = (pickerPick + EMOTES.length - 1) % EMOTES.length;
   else if (pickerOpen && (k === "d" || k === "arrowright")) pickerPick = (pickerPick + 1) % EMOTES.length;
@@ -715,10 +747,11 @@ addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
   keys.delete(k);
   if (k === " " && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
+  if (k === "m") showMap(false);
   if (k === "tab") closeBoard();
 });
 addEventListener("blur", () => {
-  keys.clear(); pickerOpen = false; stick.mag = 0; closeBoard(); showEmoteRow(false);
+  keys.clear(); pickerOpen = false; showMap(false); stick.mag = 0; closeBoard(); showEmoteRow(false);
 });
 const held = (...k) => k.some((x) => keys.has(x));
 
@@ -2408,36 +2441,51 @@ function drawEmotes(cw, ch, dpr) {
 }
 
 /**
- * The minimap owns the bottom right corner, so the touch buttons have to know
- * how much of it the map has taken. Both edges are published as a length in
- * from the bottom and the right, and only when they move: this runs every
- * frame.
+ * There is one map. In the corner it holds a window on the Lawn around the
+ * Mower; M grows that same map out to the middle of the screen, where it
+ * holds the whole Lawn. Nothing fades in over it and nothing is drawn twice:
+ * the frame, the paths and the Mowers travel with it, so the corner is never
+ * a second map that disagrees with the first.
  */
-let mapTop = -1, mapSide = -1;
+function mapOrigin(view, world, centre) {
+  // A view wider than the Lawn centres it rather than pin it to one edge.
+  if (view >= world) return (world - view) / 2;
+  return Math.max(0, Math.min(world - view, centre - view / 2));
+}
 
-function drawMinimap(cw, ch, dpr) {
-  if (!minimapFrame.complete || !minimapFrame.naturalWidth || !minimapOpening.complete || !minimapOpening.naturalWidth) return;
-  // A phone held sideways runs out of height first, so cap against both.
-  const width = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
-  const height = width * 0.75;
-  const margin = 16;
-  // Clear the home button bar, and the credit line that sits under the map.
-  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
-  const left = cw / dpr - width - margin;
-  const top = ch / dpr - height - floor;
-  const fromBottom = Math.round(height + floor), fromRight = Math.round(width + margin);
-  if (fromBottom !== mapTop || fromRight !== mapSide) {
-    mapTop = fromBottom; mapSide = fromRight;
-    document.documentElement.style.setProperty("--map-top", `${fromBottom}px`);
-    document.documentElement.style.setProperty("--map-side", `${fromRight}px`);
+/** Where a Field's name belongs: the middle of the Tiles the Field owns. */
+let fieldMarks = [], fieldMarksFor = "";
+
+function fieldCentres() {
+  const size = `${W}x${H}`;
+  if (fieldMarksFor === size) return fieldMarks;
+  const sums = FIELD_NAMES.map(() => [0, 0, 0]);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const id = fieldAt(x + 0.5, y + 0.5, W, H);
+    if (id < 0) continue;
+    sums[id][0] += x + 0.5; sums[id][1] += y + 0.5; sums[id][2]++;
   }
+  fieldMarks = sums.map(([x, y, n], i) => ({ name: FIELD_NAMES[i], x: x / n, y: y / n }));
+  fieldMarksFor = size;
+  return fieldMarks;
+}
+
+/**
+ * Paint one map into the frame art at the given rectangle. `viewW` is how
+ * much of the Lawn, in world units, the frame holds from side to side; the
+ * height follows from the shape of the opening, so nothing is ever stretched.
+ */
+function paintMap(left, top, width, height, viewW, centreX, centreY, dpr, naming) {
   const mapX = left + width * 0.07, mapY = top + height * 0.14;
   const mapW = width * 0.86, mapH = height * 0.73;
-  const viewW = 90, viewH = viewW * mapH / mapW;
-  const originX = Math.max(0, Math.min(W - viewW, me.x - viewW / 2));
-  const originY = Math.max(0, Math.min(H - viewH, me.y - viewH / 2));
+  const viewH = viewW * mapH / mapW;
+  const originX = mapOrigin(viewW, W, centreX);
+  const originY = mapOrigin(viewH, H, centreY);
   const sx = mapW / viewW, sy = mapH / viewH;
   const point = (x, y) => [mapX + (x - originX) * sx, mapY + (y - originY) * sy];
+  // A bigger map earns bigger markers, but not in proportion: an arrow three
+  // times as wide as the corner's would be a blot on the Lawn it stands on.
+  const mark = Math.sqrt(width / 300);
   const pixelW = Math.round(width * dpr), pixelH = Math.round(height * dpr);
   if (minimapCanvas.width !== pixelW || minimapCanvas.height !== pixelH) {
     minimapCanvas.width = pixelW; minimapCanvas.height = pixelH;
@@ -2467,15 +2515,31 @@ function drawMinimap(cw, ch, dpr) {
     }
     g.stroke();
   }
+  if (naming > 0) {
+    g.globalAlpha = naming;
+    g.font = `${Math.round(Math.max(11, width * 0.021))}px Georgia, serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.strokeStyle = "#1c2a14";
+    g.lineWidth = 3;
+    g.lineJoin = "round";
+    g.fillStyle = "#f4ffca";
+    for (const field of fieldCentres()) {
+      const p = point(field.x, field.y);
+      g.strokeText(field.name, ...p);
+      g.fillText(field.name, ...p);
+    }
+    g.globalAlpha = 1;
+  }
   for (const p of peers.values()) {
     if (performance.now() - p.seen > PEER_TIMEOUT) continue;
     g.fillStyle = `hsl(${p.hue} 75% 65%)`;
     g.strokeStyle = "#182413";
     g.lineWidth = 1.5;
-    g.beginPath(); g.arc(...point(p.x, p.y), 3.5, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.beginPath(); g.arc(...point(p.x, p.y), 3.5 * mark, 0, Math.PI * 2); g.fill(); g.stroke();
   }
   const [x, y] = point(me.x, me.y);
-  g.translate(x, y); g.rotate(me.a);
+  g.translate(x, y); g.rotate(me.a); g.scale(mark, mark);
   g.fillStyle = "#f4ffca";
   g.strokeStyle = "#243318";
   g.lineWidth = 1.5;
@@ -2490,6 +2554,62 @@ function drawMinimap(cw, ch, dpr) {
   hud.getContext('2d').drawImage(minimapCanvas, Math.round(left * dpr), Math.round(top * dpr));
 }
 
+const mapReady = () => minimapFrame.complete && minimapFrame.naturalWidth
+  && minimapOpening.complete && minimapOpening.naturalWidth;
+
+/**
+ * The minimap owns the bottom right corner, so the touch buttons have to know
+ * how much of it the map has taken. Both edges are published as a length in
+ * from the bottom and the right, and only when they move: this runs every
+ * frame. They stay the corner's own measurements while the map is out, so
+ * the buttons do not follow it across the screen and back.
+ */
+let mapTop = -1, mapSide = -1;
+
+function drawMap(cw, ch, dpr) {
+  if (!mapReady()) return;
+  // A phone held sideways runs out of height first, so cap against both.
+  const cornerW = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
+  const margin = 16;
+  // Clear the home button bar, and the credit line that sits under the map.
+  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
+  const cornerLeft = cw / dpr - cornerW - margin;
+  const cornerTop = ch / dpr - cornerW * 0.75 - floor;
+  const fromBottom = Math.round(cornerW * 0.75 + floor), fromRight = Math.round(cornerW + margin);
+  if (fromBottom !== mapTop || fromRight !== mapSide) {
+    mapTop = fromBottom; mapSide = fromRight;
+    document.documentElement.style.setProperty("--map-top", `${fromBottom}px`);
+    document.documentElement.style.setProperty("--map-side", `${fromRight}px`);
+  }
+
+  const shift = mapShift();
+  const bigW = Math.min(1100, innerWidth * 0.86, innerHeight * 0.86 / 0.75);
+  const bigLeft = (cw / dpr - bigW) / 2, bigTop = (ch / dpr - bigW * 0.75) / 2;
+  // The Lawn is wider than it is tall, and so is the opening, but not by the
+  // same amount: fit the taller of the two and let the Lawn keep a verge.
+  const bigView = Math.max(W, H * 0.86 / (0.73 * 0.75)) * 1.04;
+  const between = (a, b) => a + (b - a) * shift;
+  const width = between(cornerW, bigW);
+  // The window on the Lawn widens by the same factor every frame, so the
+  // ground under the frame runs out at an even pace rather than bolt at the
+  // end. Each step of the walk out is worth as much as the last.
+  const view = 90 * Math.pow(bigView / 90, shift);
+  // A map that fills the screen has the room to name the Fields; the corner
+  // has room for none of it, so the names arrive with the space to hold them.
+  const naming = Math.max(0, (shift - 0.45) / 0.55);
+
+  if (shift > 0) {
+    const hg = hud.getContext('2d');
+    hg.save();
+    hg.globalAlpha = shift * 0.45;
+    hg.fillStyle = "#0b1207";
+    hg.fillRect(0, 0, cw, ch);
+    hg.restore();
+  }
+  paintMap(between(cornerLeft, bigLeft), between(cornerTop, bigTop), width, width * 0.75,
+    view, between(me.x, W / 2), between(me.y, H / 2), dpr, naming);
+}
+
 function drawHud() {
   const dpr = Math.min(devicePixelRatio || 1, innerWidth * innerHeight > 7000000 ? 1 : 1.35);
   const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
@@ -2500,7 +2620,7 @@ function drawHud() {
   drawBumps(cw, ch, dpr);
   drawStars(cw, ch, dpr);
   drawEmotes(cw, ch, dpr);
-  drawMinimap(cw, ch, dpr);
+  drawMap(cw, ch, dpr);
 }
 
 setTimeout(() => (help.style.opacity = "0"), 8000);
