@@ -25,6 +25,10 @@ const STROKE_RATE = 40;
 const RESYNC_GAP_MS = 1000;
 /** Position reports one Mower may send per second. */
 const POS_RATE = 30;
+/** Emotes one Mower may send per second. */
+const EMOTE_RATE = 2;
+/** How many Emotes the wheel offers. The client holds the pictures. */
+const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
 const PERSIST_DELAY_MS = 2000;
@@ -32,8 +36,10 @@ const PERSIST_DELAY_MS = 2000;
 /** A Mow Stroke is the swath swept between two points, not a single dot. */
 type ClientMessage =
   | { t: "mow"; x0: number; y0: number; x1: number; y1: number }
-  /** Where a Mower is and which way it points. Relayed, never stored. */
-  | { t: "pos"; x: number; y: number; a: number };
+  /** Where a Mower is, which way it points, and how much it has cut. */
+  | { t: "pos"; x: number; y: number; a: number; s: number }
+  /** Which Emote a Mower shows. Relayed, never stored. */
+  | { t: "emote"; e: number };
 
 interface Budget {
   tokens: number;
@@ -47,6 +53,7 @@ export class Lawn extends DurableObject {
   private dirty = false;
   private budgets = new WeakMap<WebSocket, Budget>();
   private posBudgets = new WeakMap<WebSocket, Budget>();
+  private emoteBudgets = new WeakMap<WebSocket, Budget>();
   private resyncedAt = new WeakMap<WebSocket, number>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -120,7 +127,21 @@ export class Lawn extends DurableObject {
       const y = Number(message.y);
       const a = Number(message.a);
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(a)) return;
-      this.broadcast(JSON.stringify({ t: "peer", id, x, y, a }), ws);
+      // The score is the Mower's own tally. The Lawn carries it between
+      // screens but never keeps it, exactly like the position.
+      const raw = Number(message.s);
+      const s = Number.isFinite(raw) && raw > 0 ? Math.floor(Math.min(raw, 1e12)) : 0;
+      this.broadcast(JSON.stringify({ t: "peer", id, x, y, a, s }), ws);
+      return;
+    }
+    if (message?.t === "emote") {
+      // An Emote is presence, like a position: relay it and store nothing.
+      // It therefore fades from the other screens on its own, and it costs
+      // the hibernating Lawn nothing.
+      if (!this.spendEmote(ws)) return;
+      const e = Number(message.e);
+      if (!Number.isInteger(e) || e < 0 || e >= EMOTE_COUNT) return;
+      this.broadcast(JSON.stringify({ t: "emoted", id, e }), ws);
       return;
     }
     if (message?.t !== "mow") return;
@@ -246,6 +267,10 @@ export class Lawn extends DurableObject {
 
   private spendPos(ws: WebSocket): boolean {
     return this.take(this.posBudgets, ws, POS_RATE);
+  }
+
+  private spendEmote(ws: WebSocket): boolean {
+    return this.take(this.emoteBudgets, ws, EMOTE_RATE);
   }
 
   private take(budgets: WeakMap<WebSocket, Budget>, ws: WebSocket, rate: number): boolean {

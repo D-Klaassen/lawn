@@ -93,6 +93,29 @@
   #field-banner.visible { opacity: 1; transform: translate(-50%, 0); }
   #field-banner-name { margin: 0; font-family: Georgia, serif; font-weight: 700; line-height: 1.1; font-size: 4.5cqw; white-space: nowrap; color: #fff0be; }
   body:has(#field-banner.visible) #help { visibility: hidden; }
+  #board {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 12; pointer-events: none;
+    min-width: min(380px, 80vw); padding: 18px 22px 20px;
+    background: rgba(20, 32, 14, .95); border: 1px solid rgba(232, 205, 128, .35);
+    border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+    text-shadow: 0 1px 3px #14200e;
+  }
+  #board[hidden] { display: none; }
+  #board .quest-label { display: block; margin-bottom: 12px; text-align: center; }
+  #board-list {
+    margin: 0; padding: 0; list-style: none;
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: 46vh; overflow: hidden;
+  }
+  #board-list li {
+    display: flex; justify-content: space-between; gap: 24px;
+    padding: 5px 8px; border-radius: 5px;
+    font-size: 14px; line-height: 1.35; color: #dce9cf;
+    font-variant-numeric: tabular-nums;
+  }
+  #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
+  #board-list li span:last-child { color: #e8cd80; }
   @media (max-width: 700px) { #score { bottom: calc(30.75vw + 28px); } }
   @media (prefers-reduced-motion: reduce) { #field-banner { transition: none; } #field-meter::-webkit-progress-value { transition: none; } }
 </style>
@@ -102,7 +125,7 @@
 <canvas id="hud"></canvas>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
-<div id="help">W A S D or arrow keys to drive · the blades are always down</div>
+<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold Tab for the board · the blades are always down</div>
 <aside id="field-quest" hidden aria-label="Current field quest">
   <img id="left-quest-art" src="/assets/left-quest-card.png" alt="" />
   <div id="quest-card-content">
@@ -121,6 +144,10 @@
   <img id="field-banner-art" src="/assets/field-entry-banner.png" width="2172" height="724" alt="" />
   <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div></div>
 </div>
+<aside id="board" hidden aria-label="Mowers on the Lawn">
+  <span class="quest-label">On the Lawn</span>
+  <ol id="board-list"></ol>
+</aside>
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
@@ -157,6 +184,8 @@ const SHADOW_SIZE = 1536;
 const PEER_TIMEOUT = 4000;
 const COLLISION_RADIUS = MOWER_SCALE * 0.85;
 let myId = "";
+/** Your own paint. It comes from your id, so every screen agrees on it. */
+let myHue = 80;
 
 let W = 288, H = 192, REGROW_MS = 1800000, RADIUS = 2.6;
 let mownAt = null;       // absolute ms per Tile
@@ -291,6 +320,7 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.t === "hello") {
       myId = m.id;
+      myHue = hueOf(myId);
       W = m.w; H = m.h; REGROW_MS = m.regrow * 1000; RADIUS = m.radius;
       fieldQuests.resize(W, H);
       restorePosition();
@@ -302,8 +332,11 @@ function connect() {
       strokes = m.strokes;
     } else if (m.t === "peer") {
       const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id) };
-      p.tx = m.x; p.ty = m.y; p.a = m.a; p.seen = performance.now();
+      p.tx = m.x; p.ty = m.y; p.a = m.a; p.score = m.s ?? 0; p.seen = performance.now();
       peers.set(m.id, p);
+    } else if (m.t === "emoted") {
+      const p = peers.get(m.id);
+      if (p) { p.emote = m.e; p.emoteAt = performance.now(); }
     } else if (m.t === "gone") {
       peers.delete(m.id);
     } else if (m.t === "mowers") {
@@ -325,17 +358,102 @@ function hueOf(id) {
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
   return h;
 }
+
+/**
+ * A Mower's name comes from its id, so every screen reads the same name for
+ * the same Mower and no name has to travel or be trusted.
+ */
+const NAME_FIRST = ["Brisk", "Quiet", "Dusty", "Merry", "Sleepy", "Bold", "Gentle", "Keen",
+  "Sunny", "Rusty", "Nimble", "Stout", "Plucky", "Tidy", "Wily", "Humble"];
+const NAME_LAST = ["Clover", "Bramble", "Thistle", "Daisy", "Fescue", "Sorrel", "Nettle", "Vetch",
+  "Ryegrass", "Meadow", "Hedgerow", "Furrow", "Acorn", "Willow", "Bracken", "Yarrow"];
+
+function nameOf(id) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h >>>= 0;
+  return `${NAME_FIRST[h % NAME_FIRST.length]} ${NAME_LAST[(h >>> 9) % NAME_LAST.length]}`;
+}
 connect();
 
 /* ---- driving ---- */
 
+/**
+ * An Emote is presence, like a position: the server relays it and stores
+ * nothing, so it fades from every screen on its own. Hold Space to open the
+ * picker, steer left or right to choose, release to show it.
+ */
+const EMOTES = ["\u{1F44B}", "\u{1F44D}", "\u{1F604}", "\u{2764}\u{FE0F}"];
+const EMOTE_MS = 2600;
+let pickerOpen = false, pickerPick = 0, pickerAt = 0;
+let myEmote = -1, myEmoteAt = 0;
+
+function sendEmote(i) {
+  myEmote = i;
+  myEmoteAt = performance.now();
+  if (connected) socket.send(JSON.stringify({ t: "emote", e: i }));
+}
+
 addEventListener("keydown", (e) => {
-  keys.add(e.key.toLowerCase());
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(e.key.toLowerCase())) e.preventDefault();
+  const k = e.key.toLowerCase();
+  keys.add(k);
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "tab"].includes(k)) e.preventDefault();
+  if (e.repeat) return;
+  if (k === "tab") openBoard();
+  else if (k === " ") { pickerOpen = true; pickerAt = performance.now(); }
+  else if (pickerOpen && (k === "a" || k === "arrowleft")) pickerPick = (pickerPick + EMOTES.length - 1) % EMOTES.length;
+  else if (pickerOpen && (k === "d" || k === "arrowright")) pickerPick = (pickerPick + 1) % EMOTES.length;
+  else if (k.length === 1 && k >= "1" && k <= String(EMOTES.length)) sendEmote(Number(k) - 1);
 });
-addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
-addEventListener("blur", () => keys.clear());
+addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  keys.delete(k);
+  if (k === " " && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
+  if (k === "tab") closeBoard();
+});
+addEventListener("blur", () => { keys.clear(); pickerOpen = false; closeBoard(); });
 const held = (...k) => k.some((x) => keys.has(x));
+
+/**
+ * The board: who is mowing now and how much each has cut. It is built from
+ * presence alone, so a Mower that goes quiet drops off it by itself.
+ */
+const board = document.getElementById("board");
+const boardList = document.getElementById("board-list");
+let boardOpen = false, boardAt = 0;
+
+function refreshBoard() {
+  const now = performance.now();
+  const rows = [];
+  for (const [id, p] of peers) {
+    if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: nameOf(id), score: p.score ?? 0, mine: false });
+  }
+  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(bladesCut), mine: true });
+  rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  boardList.replaceChildren(...rows.map((r) => {
+    const li = document.createElement("li");
+    if (r.mine) li.className = "mine";
+    const name = document.createElement("span");
+    name.textContent = r.name;
+    const score = document.createElement("span");
+    score.textContent = r.score.toLocaleString();
+    li.append(name, score);
+    return li;
+  }));
+}
+
+function openBoard() {
+  boardOpen = true;
+  boardAt = performance.now();
+  refreshBoard();
+  board.hidden = false;
+}
+
+function closeBoard() {
+  if (!boardOpen) return;
+  boardOpen = false;
+  board.hidden = true;
+}
 
 let sendAt = 0, sentFrom = null, posAt = 0;
 const bumps = [];
@@ -380,7 +498,9 @@ function moveMower(dx, dy, now) {
 function drive(dt) {
   mowing *= Math.exp(-dt * 7);
   const fwd = (held("w", "arrowup") ? 1 : 0) - (held("s", "arrowdown") ? 1 : 0);
-  const turn = (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
+  // Left and right choose an Emote while the picker is open, so the wheels of
+  // the Mower stay straight. Forward and back still drive.
+  const turn = pickerOpen ? 0 : (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
 
   me.v += fwd * ACCEL * dt;
   me.v -= me.v * DRAG * dt;
@@ -407,7 +527,7 @@ function drive(dt) {
     sentFrom = null; sendAt = now;
   }
   if (connected && now - posAt > 80) {
-    socket.send(JSON.stringify({ t: "pos", x: me.x, y: me.y, a: me.a }));
+    socket.send(JSON.stringify({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) }));
     posAt = now;
   }
   for (const [id, p] of peers) {
@@ -419,7 +539,7 @@ function drive(dt) {
 
 function allMowers() {
   return [...peers.values()].map((p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false }))
-    .concat([{ x: me.x, y: me.y, a: me.a, hue: 80, me: true }]);
+    .concat([{ x: me.x, y: me.y, a: me.a, hue: myHue, me: true }]);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1222,15 +1342,20 @@ function render(now, ts) {
   F.device.queue.submit([enc.finish()]);
 }
 
-function drawMowing(cw, ch, dpr) {
-  const now = performance.now();
+/** A world point as a HUD pixel, through the camera the field was drawn with. */
+function projector(cw, ch) {
   const m = F.camData;
-  const project = (x, height, y) => {
+  return (x, height, y) => {
     const w = m[3] * x + m[7] * height + m[11] * y + m[15];
     if (w <= 0) return null;
     return [((m[0] * x + m[4] * height + m[8] * y + m[12]) / w * 0.5 + 0.5) * cw,
       (0.5 - (m[1] * x + m[5] * height + m[9] * y + m[13]) / w * 0.5) * ch];
   };
+}
+
+function drawMowing(cw, ch, dpr) {
+  const now = performance.now();
+  const project = projector(cw, ch);
   g.save();
   if (mowing > 0.02) {
     const p = project(me.x + Math.cos(me.a) * 1.8, 0.22, me.y + Math.sin(me.a) * 1.8);
@@ -1264,15 +1389,13 @@ function drawMowing(cw, ch, dpr) {
 function drawBumps(cw, ch, dpr) {
   const now = performance.now();
   while (bumps.length && now - bumps[0].born > 480) bumps.shift();
-  const m = F.camData;
+  const project = projector(cw, ch);
   g.save();
   for (const bump of bumps) {
     const t = (now - bump.born) / 480;
-    const height = 0.8 + t * 0.9;
-    const w = m[3] * bump.x + m[7] * height + m[11] * bump.y + m[15];
-    if (w <= 0) continue;
-    const x = ((m[0] * bump.x + m[4] * height + m[8] * bump.y + m[12]) / w * 0.5 + 0.5) * cw;
-    const y = (0.5 - (m[1] * bump.x + m[5] * height + m[9] * bump.y + m[13]) / w * 0.5) * ch;
+    const p = project(bump.x, 0.8 + t * 0.9, bump.y);
+    if (!p) continue;
+    const [x, y] = p;
     const spread = (10 + 43 * (1 - (1 - t) ** 3)) * dpr;
     g.globalAlpha = (1 - t) ** 1.5 * 0.8;
     for (let i = 0; i < 5; i++) {
@@ -1297,6 +1420,67 @@ function drawBumps(cw, ch, dpr) {
       }
     }
   }
+  g.restore();
+}
+
+function drawEmotes(cw, ch, dpr) {
+  const now = performance.now();
+  const project = projector(cw, ch);
+
+  const bubble = (p, glyph, alpha, size) => {
+    const r = size / 2;
+    g.globalAlpha = alpha;
+    g.fillStyle = "rgba(20,32,14,.72)";
+    g.strokeStyle = "rgba(255,255,255,.3)";
+    g.lineWidth = 1.5 * dpr;
+    g.beginPath();
+    g.roundRect(p[0] - r, p[1] - r, size, size, r * 0.6);
+    g.fill();
+    g.stroke();
+    g.font = `${Math.round(size * 0.6)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(glyph, p[0], p[1] + size * 0.04);
+  };
+
+  g.save();
+
+  // What every Mower shows now, rising and fading as it ages out.
+  const showing = [];
+  for (const p of peers.values()) {
+    if (p.emote >= 0 && now - p.emoteAt < EMOTE_MS) showing.push({ x: p.x, y: p.y, e: p.emote, at: p.emoteAt });
+  }
+  if (myEmote >= 0 && now - myEmoteAt < EMOTE_MS) showing.push({ x: me.x, y: me.y, e: myEmote, at: myEmoteAt });
+  for (const s of showing) {
+    const t = (now - s.at) / EMOTE_MS;
+    const p = project(s.x, 2.4 + t * 0.7, s.y);
+    if (!p) continue;
+    bubble(p, EMOTES[s.e], Math.min(1, t * 9) * Math.min(1, (1 - t) * 4), 50 * dpr);
+  }
+
+  // The picker is a row above your own Mower, so your eyes stay where you
+  // drive and the Mower never covers a choice.
+  if (pickerOpen) {
+    const centre = project(me.x, 3.6, me.y);
+    if (centre) {
+      const grow = Math.min(1, (now - pickerAt) / 140);
+      const step = 64 * dpr;
+      const left = centre[0] - ((EMOTES.length - 1) / 2) * step;
+      for (let i = 0; i < EMOTES.length; i++) {
+        const picked = i === pickerPick;
+        const p = [left + i * step, centre[1] - (picked ? 6 : 0) * dpr * grow];
+        if (picked) {
+          g.globalAlpha = grow;
+          g.fillStyle = "rgba(229,255,151,.24)";
+          g.beginPath();
+          g.arc(p[0], p[1], 36 * dpr, 0, Math.PI * 2);
+          g.fill();
+        }
+        bubble(p, EMOTES[i], grow * (picked ? 1 : 0.5), (picked ? 54 : 42) * dpr);
+      }
+    }
+  }
+
   g.restore();
 }
 
@@ -1374,6 +1558,7 @@ function drawHud() {
   updateScore(bladesCut, performance.now());
   drawMowing(cw, ch, dpr);
   drawBumps(cw, ch, dpr);
+  drawEmotes(cw, ch, dpr);
   drawMinimap(cw, ch, dpr);
 }
 
@@ -1387,6 +1572,7 @@ function frame(ts) {
   if (!mownAt || !F) return;
   const now = Date.now() + clockOffset;
   drive(dt);
+  if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now), connected);
   render(now, ts);
   drawHud();
