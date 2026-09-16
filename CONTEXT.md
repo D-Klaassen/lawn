@@ -13,16 +13,16 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   capsule with radius `MOW_RADIUS` around that line.
 - **Mower** — one connected visitor.
 - **Regrowth** — the return of Blade Height to 1. A Lawn nobody mows is
-  overgrown again the next day.
-- **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 20 to
-  28 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
+  overgrown again the same day.
+- **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 2 to
+  6 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
   so the grass comes back in slow ground and quick ground. It is a pure
   function of the position of the Tile: no one stores it and no one sends it,
   and both sides build the same table.
 - **Snapshot** — how far each Tile is through its Regrowth, from 0 to
-  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. A Regrowth is longer than 65535
-  seconds, and no two Tiles share a Regrowth, so the wire carries the
-  fraction, not the age in seconds.
+  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Regrowth, so
+  the wire carries the fraction and not the age in seconds. The wire therefore
+  stays the same when the Growth Rate changes.
 
 ## Why there is no server tick
 

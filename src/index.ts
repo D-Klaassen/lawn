@@ -10,22 +10,23 @@ const LAWN_HEIGHT = 192;
 const TILE_COUNT = LAWN_WIDTH * LAWN_HEIGHT;
 
 /**
- * Seconds a Tile needs to grow from mown to fully overgrown. No Tile grows at
- * the speed of its neighbour: the Growth Rate moves between these two bounds
- * across the Lawn, so the field comes back uneven, the way a real lawn does.
+ * Seconds a Tile needs to grow from mown to fully overgrown: 2 hours to 6
+ * hours. No Tile grows at the speed of its neighbour: the Growth Rate moves
+ * between these two bounds across the Lawn, so the field comes back uneven,
+ * the way a real lawn does.
  */
-const REGROW_MIN_SECONDS = 72000;
-const REGROW_MAX_SECONDS = 100800;
+const REGROW_MIN_SECONDS = 7200;
+const REGROW_MAX_SECONDS = 21600;
 /**
  * Width of one patch of like-minded grass, in Tiles. Below about ten the
  * Growth Rate reads as speckle on single Tiles instead of as slow ground.
  */
 const PATCH_TILES = 16;
 /**
- * Full scale of one Snapshot entry. A Regrowth is longer than 65535 seconds,
- * so a Snapshot carries how far a Tile is through its Regrowth, not its age
- * in seconds. One step is about 1.5 seconds, far below one part in 255 of
- * Blade Height.
+ * Full scale of one Snapshot entry. A Snapshot carries how far a Tile is
+ * through its Regrowth, not its age in seconds, so the wire does not change
+ * when the Regrowth does. One step is a third of a second at the slowest
+ * Growth Rate, far below one part in 255 of Blade Height.
  */
 const SNAPSHOT_SCALE = 65535;
 
