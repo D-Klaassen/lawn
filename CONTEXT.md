@@ -68,6 +68,27 @@ past its size and back, breathes where it hangs, and lifts away as it ages
 out. A ring leaves it the moment it lands, for the Mower who was looking
 elsewhere. All of it stands still for a visitor who asks for less motion.
 
+## One map, and M grows it
+
+The map in the corner and the map M opens are one map. Hold M and the corner
+map grows out to the middle of the screen, where it holds the whole Lawn; let
+go and it goes back to its corner. Nothing new fades in over it, so a Mower
+never reads two maps of one Lawn at two scales at the same time.
+
+Two things change while it grows. The window on the Lawn widens by the same
+factor every frame — 90 Tiles across in the corner, the whole Lawn when it is
+out — so the ground under the frame runs out at an even pace instead of
+bolting at the end. And the names of the Fields arrive late, because a map
+that fills the screen has the room to write them and the corner has room for
+none of it.
+
+The World Quest Tracker steps aside while the map is out, the way it already
+stands down for the Field banner. It stands over the right of the map, and it
+says what the map says.
+
+The map is held, like the board, and not switched on. A key you hold cannot be
+left on, so a hand that leaves the keyboard always leaves the Lawn in view.
+
 ## The Lawn decides where a Mower is
 
 A Mow Stroke says where the Mower is now. It does not say where the swath
