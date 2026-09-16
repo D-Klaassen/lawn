@@ -7,14 +7,21 @@
 <meta name="description" content="One shared lawn for everybody. Drive the mower, cut the grass. It grows back whether you are here or not." />
 <style>
   * { box-sizing: border-box; }
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-top: env(safe-area-inset-top, 0px); }
   html, body { height: 100%; margin: 0; }
   body {
     background: #cbdcc2;
     color: #fff;
     font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     overflow: hidden;
+    /* A thumb on the field must not pull the page down or rubber-band it. */
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
-  #gpu, #hud { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  /* 100dvh, not 100vh: the canvases are sized from innerHeight, and on a phone
+     only the dynamic viewport agrees with it while the browser bars move. */
+  #gpu, #hud { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block; touch-action: none; }
   #brand {
     position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
     margin: 0; z-index: 10; pointer-events: none;
@@ -34,7 +41,7 @@
     transition: opacity .8s ease;
   }
   #score {
-    position: fixed; bottom: calc(38px + env(safe-area-inset-bottom, 0px)); left: 50%;
+    position: fixed; bottom: calc(38px + var(--safe-bottom)); left: 50%;
     transform: translateX(-50%); z-index: 10; pointer-events: none;
     color: #f1ffd7; font-size: clamp(24px, 3.1vw, 42px); line-height: 1;
     font-weight: 900; letter-spacing: .02em; text-align: center;
@@ -48,8 +55,8 @@
     letter-spacing: .03em; white-space: nowrap; color: #dce9cf;
   }
   #credit {
-    position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 50%;
-    transform: translateX(-50%); z-index: 10;
+    position: fixed; bottom: calc(12px + var(--safe-bottom)); left: 50%;
+    transform: translateX(-50%); z-index: 16;
     font-size: 11px; line-height: 1.4; letter-spacing: .05em; white-space: nowrap;
     color: #dce9cf; opacity: .72; text-decoration: none;
     text-shadow: 0 1px 6px rgba(0,0,0,.6);
@@ -78,7 +85,24 @@
     background: url('/assets/world-quest-header.png') center / 100% 100% no-repeat;
     font: 16px Georgia, serif; color: #f4d56e; font-weight: 400;
   }
+  /* The heading is a button only where the tracker folds. Everywhere else it
+     takes no taps, so it cannot steal one from the field behind it. */
+  #quest-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    flex: 1; align-self: stretch; padding: 0 12px 0 0; margin: 0;
+    background: none; border: 0; font: inherit; color: inherit; text-align: left;
+    pointer-events: none; cursor: default; -webkit-tap-highlight-color: transparent;
+  }
+  #world-quests.collapsible #quest-toggle { pointer-events: auto; cursor: pointer; touch-action: manipulation; }
+  #quest-chevron { display: none; font-size: 11px; color: #f4d56e; transition: transform .2s ease; }
+  #world-quests.collapsible #quest-chevron { display: block; }
+  #world-quests.collapsed #quest-chevron { transform: rotate(-90deg); }
+  #world-quests.collapsed #world-quest-list { display: none; }
+  #world-quests.collapsed::before { inset: 20px -10px -6px; }
   #world-quest-summary { margin: 6px 16px 5px 26px; font-size: 10px; letter-spacing: .03em; color: #c6bea0; }
+  /* Folded, the tracker still has to say where you are and how far along. */
+  #world-quest-here { color: #ecd16b; }
+  #world-quest-here:not(:empty)::after { content: " · "; color: #c6bea0; }
   #world-quest-list { list-style: none; margin: 0; padding: 0 12px 12px; max-height: calc(100dvh - clamp(100px, 22vh, 190px) - 310px); overflow-y: auto; pointer-events: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #ab8a3e #11190f66; }
   .world-quest { display: flex; gap: 8px; padding: 9px 4px; border-left: 2px solid transparent; transition: background .4s; }
   .world-quest.active { background: #d8b7530d; }
@@ -102,15 +126,16 @@
   .world-quest.completed progress::-moz-progress-bar { background: #c6efa0; }
   @keyframes quest-complete { 0%, 25% { background-color: #e2ef9366; filter: brightness(1.5); } 100% { background-color: transparent; filter: brightness(1); } }
   @media (max-width: 1100px) { #world-quests { width: 240px; right: 12px; top: 160px; } }
-  @media (max-width: 700px) {
-    #world-quests { top: 115px; right: 8px; width: 205px; }
-    #world-quests h2 { font-size: 14px; height: 34px; padding-left: 34px; }
-    #world-quest-summary { font-size: 9px; margin: 5px 12px 4px 20px; }
-    #world-quest-list { padding: 0 6px 6px; max-height: calc(100dvh - 330px); }
-    .world-quest { padding: 8px 3px; gap: 6px; }
+  @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
+    #world-quests { top: calc(8px + var(--safe-top) + 124px); right: 8px; width: 202px; }
+    #world-quests h2 { font-size: 13px; height: 32px; padding-left: 30px; }
+    #world-quest-summary { font-size: 9px; margin: 4px 10px 4px 18px; }
+    /* Leave the minimap its corner: the list scrolls rather than reach it. */
+    #world-quest-list { padding: 0 6px 6px; max-height: min(300px, calc(100dvh - 322px)); }
+    .world-quest { padding: 7px 3px; gap: 6px; }
     .world-quest-title { font-size: 13px; }
   }
-  @media (max-height: 620px) { #world-quests { top: 85px; } #world-quest-list { max-height: calc(100dvh - 340px); } .world-quest { padding-top: 3px; padding-bottom: 3px; } }
+  @media (max-height: 620px) and (min-width: 1001px) { #world-quests { top: 85px; } #world-quest-list { max-height: calc(100dvh - 340px); } .world-quest { padding-top: 3px; padding-bottom: 3px; } }
   @media (prefers-reduced-motion: reduce) { .world-quest, .world-quest.completed { animation: none; transition: none; } .world-quest progress::-webkit-progress-value { transition: none; } }
   #field-banner {
     position: fixed; top: calc(18px + clamp(30px, 5.2vw, 66px)); left: 50%; transform: translate(-50%, 8px);
@@ -152,11 +177,95 @@
   }
   #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
   #board-list li span:last-child { color: #e8cd80; }
-  @media (max-width: 700px) {
-    #score { bottom: calc(30.75vw + 46px); }
-    #credit { bottom: calc(30.75vw + 24px); }
+
+  /* ------------------------------------------------------------------ *
+   * touch controls
+   * A thumb gets one stick and two buttons, and nothing else on a phone
+   * may sit where the thumbs land: the bottom left and the bottom right.
+   * ------------------------------------------------------------------ */
+  #touch-ui { display: none; }
+  body.touch #touch-ui { display: block; }
+  #stick-zone {
+    position: fixed; left: 0; bottom: 0; z-index: 14;
+    width: min(54vw, 320px); height: min(42dvh, 330px);
+    touch-action: none;
   }
-  @media (prefers-reduced-motion: reduce) { #field-banner { transition: none; } #field-meter::-webkit-progress-value { transition: none; } }
+  #stick {
+    position: absolute; left: 50%; bottom: calc(84px + var(--safe-bottom));
+    transform: translate(-50%, 50%);
+    width: 124px; height: 124px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 38%, rgba(255,255,255,.16), rgba(16,26,11,.55));
+    border: 2px solid rgba(220,233,207,.4);
+    box-shadow: 0 6px 22px rgba(11,18,8,.45), inset 0 1px 0 rgba(255,255,255,.18);
+    opacity: .75; transition: opacity .25s ease, left .18s ease, bottom .18s ease;
+  }
+  #stick.grabbed { opacity: 1; transition: none; }
+  #stick-knob {
+    position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 34%, #f4ffd9, #9db87c);
+    border: 1.5px solid rgba(36,51,24,.42);
+    box-shadow: 0 3px 12px rgba(11,18,8,.45);
+    transition: transform .16s ease;
+  }
+  #stick.grabbed #stick-knob { transition: none; }
+  #touch-actions {
+    position: fixed; z-index: 14; right: 16px;
+    bottom: calc(var(--map-top, 150px) + 12px);
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  }
+  .touch-action-row { display: flex; align-items: center; gap: 8px; }
+  .touch-btn {
+    display: grid; place-items: center; padding: 0; margin: 0;
+    width: 52px; height: 52px; border-radius: 50%;
+    font: 22px/1 "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", ui-sans-serif, system-ui, sans-serif;
+    color: #f1ffd7; background: rgba(20,32,14,.66);
+    border: 1.5px solid rgba(220,233,207,.28);
+    box-shadow: 0 4px 16px rgba(11,18,8,.4);
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .touch-btn:active { transform: scale(.94); }
+  .touch-btn[aria-pressed="true"], .touch-btn[aria-expanded="true"] {
+    background: rgba(53,79,37,.88); border-color: rgba(232,205,128,.55);
+  }
+  #emote-row { display: flex; gap: 6px; }
+  #emote-row[hidden] { display: none; }
+  #emote-row .touch-btn { width: 46px; height: 46px; font-size: 20px; }
+  body.touch #board { pointer-events: auto; }
+
+  @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
+    /* The title, the score and the hint stack at the top, so the whole
+       bottom of the screen belongs to the thumbs and the mower. */
+    #brand { top: calc(8px + var(--safe-top)); font-size: 22px; letter-spacing: -.02em; }
+    #score {
+      top: calc(43px + var(--safe-top)); bottom: auto;
+      font-size: 26px;
+    }
+    #mower-count { margin-bottom: 2px; font-size: 10px; }
+    #help {
+      top: calc(85px + var(--safe-top)); font-size: 11px;
+      max-width: 82vw; letter-spacing: .02em; line-height: 1.45;
+    }
+    #credit { bottom: calc(5px + var(--safe-bottom)); font-size: 10px; }
+    /* The banner drops below the score rather than over it, and the tracker
+       stands down while it shows: the two of them say the same thing. */
+    #field-banner { top: calc(100px + var(--safe-top)); width: min(88vw, 420px); }
+    body:has(#field-banner.visible) #world-quests { visibility: hidden; }
+    #board { min-width: min(320px, 88vw); padding: 16px 16px 18px; }
+    #board-list li { font-size: 13px; gap: 14px; }
+  }
+  @media (max-height: 560px) and (max-width: 1000px) {
+    #stick-zone { height: min(64dvh, 260px); }
+    #stick { width: 104px; height: 104px; bottom: calc(66px + var(--safe-bottom)); }
+    #stick-knob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+    /* No room above the minimap on a screen this short: sit beside it. */
+    #touch-actions { right: calc(var(--map-side, 220px) + 12px); bottom: calc(14px + var(--safe-bottom)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #field-banner { transition: none; }
+    #field-meter::-webkit-progress-value { transition: none; }
+    #stick, #stick-knob, .touch-btn { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -166,8 +275,8 @@
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
 <div id="help">W A S D or arrow keys to drive · hold Space to emote · hold Tab for the board · the blades are always down</div>
 <aside id="world-quests" aria-label="World Quest Tracker">
-  <h2>World Quest Tracker</h2>
-  <div id="world-quest-summary">0 / 6 completed</div>
+  <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
+  <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
   <ol id="world-quest-list"></ol>
 </aside>
 <div id="field-banner" role="status">
@@ -179,6 +288,16 @@
   <ol id="board-list"></ol>
 </aside>
 <a id="credit" href="https://github.com/Onnokh" target="_blank" rel="noopener noreferrer">Made by Onkie</a>
+<div id="touch-ui">
+  <div id="stick-zone"><div id="stick"><div id="stick-knob"></div></div></div>
+  <div id="touch-actions">
+    <div class="touch-action-row">
+      <div id="emote-row" hidden></div>
+      <button id="emote-btn" class="touch-btn" type="button" aria-expanded="false" aria-label="Emote">&#128522;</button>
+    </div>
+    <button id="board-btn" class="touch-btn" type="button" aria-pressed="false" aria-label="Mowers on the Lawn">&#9776;</button>
+  </div>
+</div>
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
@@ -199,6 +318,14 @@ minimapFrame.src = '/assets/minimap-frame.png';
 const minimapOpening = new Image();
 minimapOpening.src = '/assets/minimap-opening.png';
 const minimapCanvas = document.createElement('canvas');
+/** The notch inset. JS cannot ask env() for it, so it is read back from CSS. */
+let safeBottom = 0;
+function readSafeArea() {
+  safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-bottom")) || 0;
+}
+readSafeArea();
+addEventListener("resize", readSafeArea);
+addEventListener("orientationchange", readSafeArea);
 const help = document.getElementById("help");
 const mowerCountEl = document.getElementById("mower-count");
 
@@ -498,7 +625,9 @@ addEventListener("keyup", (e) => {
   if (k === " " && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
   if (k === "tab") closeBoard();
 });
-addEventListener("blur", () => { keys.clear(); pickerOpen = false; closeBoard(); });
+addEventListener("blur", () => {
+  keys.clear(); pickerOpen = false; stick.mag = 0; closeBoard(); showEmoteRow(false);
+});
 const held = (...k) => k.some((x) => keys.has(x));
 
 /**
@@ -507,6 +636,7 @@ const held = (...k) => k.some((x) => keys.has(x));
  */
 const board = document.getElementById("board");
 const boardList = document.getElementById("board-list");
+const boardBtn = document.getElementById("board-btn");
 let boardOpen = false, boardAt = 0;
 
 function refreshBoard() {
@@ -534,13 +664,125 @@ function openBoard() {
   boardAt = performance.now();
   refreshBoard();
   board.hidden = false;
+  boardBtn.setAttribute("aria-pressed", "true");
 }
 
 function closeBoard() {
   if (!boardOpen) return;
   boardOpen = false;
   board.hidden = true;
+  boardBtn.setAttribute("aria-pressed", "false");
 }
+
+/* ------------------------------------------------------------------ *
+ * the stick
+ *
+ * The camera holds one heading, so the stick can mean a direction in the
+ * world rather than a wheel: push where the Mower should go and it steers
+ * there as fast as it can turn. Wheel controls under a thumb read as
+ * inverted whenever the Mower faces the bottom of the screen, which is
+ * half of the time. The physics are the ones the keys drive; only the
+ * throttle and the steering come from somewhere else.
+ * ------------------------------------------------------------------ */
+const STICK_TRAVEL = 44, STICK_DEAD = 6;
+const stick = { dx: 0, dy: 0, mag: 0 };
+const stickZone = document.getElementById("stick-zone");
+const stickEl = document.getElementById("stick");
+const stickKnob = document.getElementById("stick-knob");
+let stickPointer = -1, stickCx = 0, stickCy = 0;
+
+function aimStick(clientX, clientY) {
+  const dx = clientX - stickCx, dy = clientY - stickCy;
+  const len = Math.hypot(dx, dy);
+  const reach = Math.min(len, STICK_TRAVEL);
+  stickKnob.style.transform = len > 0.001
+    ? `translate(${dx / len * reach}px, ${dy / len * reach}px)` : "";
+  if (len <= STICK_DEAD) { stick.mag = 0; return; }
+  stick.dx = dx / len; stick.dy = dy / len;
+  stick.mag = Math.min(1, (len - STICK_DEAD) / (STICK_TRAVEL - STICK_DEAD));
+}
+
+stickZone.addEventListener("pointerdown", (e) => {
+  if (stickPointer !== -1) return;
+  stickPointer = e.pointerId;
+  stickZone.setPointerCapture(e.pointerId);
+  // The base comes to the thumb. A stick you have to find first is a stick
+  // you drive off the edge of.
+  const zone = stickZone.getBoundingClientRect();
+  stickEl.style.left = `${e.clientX - zone.left}px`;
+  stickEl.style.bottom = `${zone.bottom - e.clientY}px`;
+  stickEl.classList.add("grabbed");
+  stickCx = e.clientX; stickCy = e.clientY;
+  aimStick(e.clientX, e.clientY);
+  e.preventDefault();
+});
+stickZone.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== stickPointer) return;
+  aimStick(e.clientX, e.clientY);
+  e.preventDefault();
+});
+
+function dropStick(e) {
+  if (e.pointerId !== stickPointer) return;
+  stickPointer = -1;
+  stick.mag = 0;
+  stickKnob.style.transform = "";
+  stickEl.classList.remove("grabbed");
+  stickEl.style.left = ""; stickEl.style.bottom = "";
+}
+stickZone.addEventListener("pointerup", dropStick);
+stickZone.addEventListener("pointercancel", dropStick);
+stickZone.addEventListener("contextmenu", (e) => e.preventDefault());
+
+/* ---- the buttons a thumb needs: an Emote, and who else is here ---- */
+const emoteBtn = document.getElementById("emote-btn");
+const emoteRow = document.getElementById("emote-row");
+
+function showEmoteRow(open) {
+  emoteRow.hidden = !open;
+  emoteBtn.setAttribute("aria-expanded", String(open));
+}
+
+emoteRow.replaceChildren(...EMOTES.map((glyph, i) => {
+  const choice = document.createElement("button");
+  choice.type = "button";
+  choice.className = "touch-btn";
+  choice.textContent = glyph;
+  choice.addEventListener("click", () => { sendEmote(i); showEmoteRow(false); });
+  return choice;
+}));
+emoteBtn.addEventListener("click", () => showEmoteRow(emoteRow.hidden));
+boardBtn.addEventListener("click", () => (boardOpen ? closeBoard() : openBoard()));
+board.addEventListener("click", closeBoard);
+
+/* A coarse pointer gets the controls at once; a laptop with a touchscreen
+   gets them the moment a finger lands on it. */
+function useTouch() { document.body.classList.add("touch"); }
+if (matchMedia("(hover: none) and (pointer: coarse)").matches) useTouch();
+addEventListener("touchstart", useTouch, { once: true, passive: true });
+if (matchMedia("(pointer: coarse)").matches) {
+  help.textContent = "Drag the stick to drive \u00b7 the blades are always down";
+}
+
+/* ---- the tracker folds away where the screen is small ---- */
+const compact = matchMedia("(max-width: 700px), (max-height: 560px) and (max-width: 1000px)");
+const quests = document.getElementById("world-quests");
+const questToggle = document.getElementById("quest-toggle");
+let questsOpen = !compact.matches;
+
+function layoutQuests() {
+  const open = !compact.matches || questsOpen;
+  quests.classList.toggle("collapsible", compact.matches);
+  quests.classList.toggle("collapsed", !open);
+  questToggle.setAttribute("aria-expanded", String(open));
+}
+compact.addEventListener("change", () => { questsOpen = !compact.matches; layoutQuests(); });
+questToggle.addEventListener("click", () => {
+  if (!compact.matches) return;
+  questsOpen = !questsOpen;
+  layoutQuests();
+});
+layoutQuests();
 
 let sendAt = 0, sentFrom = null, posAt = 0;
 const bumps = [];
@@ -584,10 +826,20 @@ function moveMower(dx, dy, now) {
 
 function drive(dt) {
   mowing *= Math.exp(-dt * 7);
-  const fwd = (held("w", "arrowup") ? 1 : 0) - (held("s", "arrowdown") ? 1 : 0);
+  let fwd = (held("w", "arrowup") ? 1 : 0) - (held("s", "arrowdown") ? 1 : 0);
   // Left and right choose an Emote while the picker is open, so the wheels of
   // the Mower stay straight. Forward and back still drive.
-  const turn = pickerOpen ? 0 : (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
+  let turn = pickerOpen ? 0 : (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
+  if (stick.mag > 0) {
+    // Screen right is +x and screen down is +y in Tile units, because the
+    // camera looks along +z from behind the Mower. The stick needs no basis.
+    const want = Math.atan2(stick.dy, stick.dx) - me.a;
+    const off = Math.atan2(Math.sin(want), Math.cos(want));
+    // Ease off in a hard turn, but never to nothing: a Mower that has stopped
+    // barely steers, so a full turn about would never come round.
+    fwd = stick.mag * (0.45 + 0.55 * Math.max(0, Math.cos(off)));
+    turn = Math.max(-1, Math.min(1, off * 2.2));
+  }
 
   me.v += fwd * ACCEL * dt;
   me.v -= me.v * DRAG * dt;
@@ -1868,13 +2120,30 @@ function drawEmotes(cw, ch, dpr) {
   g.restore();
 }
 
+/**
+ * The minimap owns the bottom right corner, so the touch buttons have to know
+ * how much of it the map has taken. Both edges are published as a length in
+ * from the bottom and the right, and only when they move: this runs every
+ * frame.
+ */
+let mapTop = -1, mapSide = -1;
+
 function drawMinimap(cw, ch, dpr) {
   if (!minimapFrame.complete || !minimapFrame.naturalWidth || !minimapOpening.complete || !minimapOpening.naturalWidth) return;
-  const width = Math.min(300, innerWidth * 0.41);
+  // A phone held sideways runs out of height first, so cap against both.
+  const width = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
   const height = width * 0.75;
   const margin = 16;
+  // Clear the home button bar, and the credit line that sits under the map.
+  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
   const left = cw / dpr - width - margin;
-  const top = ch / dpr - height - margin;
+  const top = ch / dpr - height - floor;
+  const fromBottom = Math.round(height + floor), fromRight = Math.round(width + margin);
+  if (fromBottom !== mapTop || fromRight !== mapSide) {
+    mapTop = fromBottom; mapSide = fromRight;
+    document.documentElement.style.setProperty("--map-top", `${fromBottom}px`);
+    document.documentElement.style.setProperty("--map-side", `${fromRight}px`);
+  }
   const mapX = left + width * 0.07, mapY = top + height * 0.14;
   const mapW = width * 0.86, mapH = height * 0.73;
   const viewW = 90, viewH = viewW * mapH / mapW;
