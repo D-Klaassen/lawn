@@ -109,6 +109,19 @@ what one address can do; it does not stop it. Twelve sockets driven flat out
 cut 147 Tiles a second, against 13 for one honest Mower. The cap is what
 decides that number, so lower it if the Lawn is still being shaved.
 
+A socket that dies without saying so keeps its place. A tab that is killed or
+a phone that loses its signal leaves a socket the runtime still reports as
+open, for ten minutes and more, so a visitor can be kept out by the ghosts of
+its own dropped connections. A tab that is closed or reloaded says goodbye
+properly and frees its place at once, which is what nearly every visitor does.
+
+Sending the oldest Mower away instead of refusing the newcomer was tried and
+dropped. `close()` on the server moves that socket to CLOSING, but the client
+is never told and the socket never leaves the count, so the cap would let
+every newcomer in and count nothing — no cap at all, and silently. Refusing
+the newcomer is worse for the rare visitor with ghosts and right for everyone
+else, so it stands until the close can be made to land.
+
 ## The score is a sum, so it must never take a NaN
 
 The score adds one Blade Height for each Tile the Mower cuts. A sum has no
