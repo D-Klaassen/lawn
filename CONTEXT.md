@@ -34,7 +34,8 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   and both sides build the same table.
 - **Mower Key** — what says whose Score a Score is. The Lawn makes one, keeps
   the Score under it, and gives it to the Mower to bring back next visit. It
-  is not the Score and it is not the name a Mower is seen by.
+  is not the Score. The name and the colour of a Mower follow it; the `id`
+  does not.
 - **Score** — how many blades one Mower has cut. The Lawn counts them as it
   cuts them. It is the sum of the Blade Height of each Tile of grass the
   Mower took, so tall grass is worth more than stubble.
@@ -292,8 +293,24 @@ a Key back only when it already holds a Score under it, so a Mower cannot name
 itself into the Score of another, and a Mower that has never cut a blade has
 no Score, gets a fresh Key, and loses nothing by it.
 
+The Key travels in a message, `{t:"i"}`, and it is the first thing a Mower
+says. It used to travel in the address of the socket, as `?m=`. An address is
+written down by every machine it passes — the logs of this Worker among them —
+and the Key is the whole of the proof of who a Mower is, so a Key in an
+address is a Score anyone who reads a log can take. The client sends nothing
+else until the Lawn has answered with `{t:"you"}`, so no Mow Stroke is ever
+counted under the wrong Mower. A client that never says which Key it holds — a
+tab that was open across the deploy — still drives and still cuts, but nothing
+it cuts is written down, because there is nowhere to write it. It reloads and
+it has its Score back.
+
 The Key is not the `id` a Mower is seen by. That stays one per socket, so two
-tabs of one browser are still two Mowers on the screen.
+tabs of one browser are still two Mowers on the screen and neither writes over
+the other on the board. What the Key does carry is the name and the colour,
+in `nm`: those two tabs wear one name, and so does the Mower that comes back
+tomorrow. A Score with a name nobody recognises is only half an identity.
+Measured: two tabs on one Key are two Mowers on the board with one name
+between them.
 
 The travel budget hangs on the Key too, and that is what bounds a Score. One
 Score can only ever be fed by one budget, so ten tabs on one Key cut what one
