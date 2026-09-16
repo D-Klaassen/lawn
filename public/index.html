@@ -359,6 +359,17 @@ const SEGS = 4;          // segments along one blade
  */
 const SAMPLES = 4;
 const MOWER_SCALE = 2.6; // the deck should about match the cut width
+/**
+ * Mower models one frame can hold. The field carries them in the camera
+ * uniform, so the count is fixed and the Lawn may hold more Mowers than this.
+ * It is 24 because a Mower costs one pair of `vec4f` there, and because the
+ * camera sees far less than 24 Mowers at once on any Lawn worth driving.
+ */
+const MOWER_SLOTS = 24;
+/** Where the paint of the first Mower sits in the camera uniform, in floats. */
+const MOWER_COL0 = 60 + MOWER_SLOTS * 4;
+/** Floats in the camera uniform. Mirrors `struct Cam` in the shader. */
+const CAM_FLOATS = MOWER_COL0 + MOWER_SLOTS * 4;
 const SHADOW_SIZE = 1536;
 /** Texels per Tile and Tiles of margin in the ground bake. Mirrors the shader. */
 const GROUND_RES = 4, GROUND_MARGIN = 12;
@@ -1093,9 +1104,29 @@ function interpolatePeer(p, renderTime) {
   p.a = blendAngle(from.a, to.a, k);
 }
 
+/**
+ * The Mowers the field draws this frame, your own Mower first.
+ *
+ * The field holds `MOWER_SLOTS` models and the Lawn may hold more Mowers than
+ * that, so a busy Lawn has to choose. It keeps your own Mower, always: a
+ * Mower that cannot see itself cannot drive. The rest of the slots go to the
+ * Mowers nearest you, because those are the ones on the screen, and a Mower
+ * over the horizon that holds a slot is a slot nobody sees.
+ *
+ * The name plate, the Stars and the Emotes of a Mower with no slot are still
+ * drawn: the HUD has no such limit, and a Mower far enough away to lose its
+ * model is drawn as a dot on the map either way.
+ */
 function allMowers() {
-  return [...peers.values()].map((p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false }))
-    .concat([{ x: me.x, y: me.y, a: me.a, hue: myHue, me: true }]);
+  const seat = (p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false });
+  const mine = { x: me.x, y: me.y, a: me.a, hue: myHue, me: true };
+  const others = [...peers.values()];
+  if (others.length + 1 > MOWER_SLOTS) {
+    others.sort((a, b) => (a.x - me.x) ** 2 + (a.y - me.y) ** 2
+                        - ((b.x - me.x) ** 2 + (b.y - me.y) ** 2));
+    others.length = MOWER_SLOTS - 1;
+  }
+  return [mine, ...others.map(seat)];
 }
 
 /* ------------------------------------------------------------------ *
@@ -1112,8 +1143,8 @@ const FIELD_WGSL = `struct Cam {
   opts     : vec4f,   // mower count, mower scale, ambient, daylight 0..1
   sunCol   : vec4f,   // rgb; w is cloud drift in Tiles
   skyCol   : vec4f,   // rgb; w is one over the sun's half extent
-  mowers   : array<vec4f, 8>,     // x, z, heading, cutting vibration
-  mowerCol : array<vec4f, 8>,     // paint
+  mowers   : array<vec4f, ${MOWER_SLOTS}>,    // x, z, heading, cutting vibration
+  mowerCol : array<vec4f, ${MOWER_SLOTS}>,    // paint
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -1902,7 +1933,7 @@ async function initField() {
   device.queue.writeBuffer(mowerBuffer, 0, mesh);
   const mowerVertices = mesh.length / 7;
   const uniform = (size) => device.createBuffer({ size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const cam = uniform(496);
+  const cam = uniform(CAM_FLOATS * 4);
   const fieldSamp = device.createSampler({ magFilter: "linear", minFilter: "linear" });
   // Every cell of the patch may grow a blade. The compute pass packs the
   // blades it keeps to the front and counts them into the draw arguments.
@@ -1958,7 +1989,7 @@ async function initField() {
     drawArgs, drawReset: new Uint32Array([(SEGS + 1) * 2, 0, 0, 0]),
     flowerArgs, flowerReset: new Uint32Array([66, 0, 0, 0]),
     cloverArgs, cloverReset: new Uint32Array([72, 0, 0, 0]),
-    camData: new Float32Array(124),
+    camData: new Float32Array(CAM_FLOATS),
     field: null, groundTex: null, fieldSize: [0, 0],
     depth: null, colour: null, size: [0, 0],
   };
@@ -2099,7 +2130,7 @@ function render(now, ts) {
   C[36] = air.dir[0]; C[37] = air.dir[1]; C[38] = air.dir[2]; C[39] = focal;
   C[40] = ts / 1000; C[41] = ox; C[42] = oy; C[43] = perRow;
   C[44] = W; C[45] = H; C[46] = cellSize; C[47] = 0.80;
-  const ms = allMowers().slice(0, 8);
+  const ms = allMowers();
   C[48] = ms.length; C[49] = MOWER_SCALE; C[50] = air.ambient; C[51] = air.daylight;
   C[52] = air.light[0]; C[53] = air.light[1]; C[54] = air.light[2];
   C[55] = cloudDrift;
@@ -2107,7 +2138,7 @@ function render(now, ts) {
   ms.forEach((m, k) => {
     C[60 + k * 4] = m.x; C[61 + k * 4] = m.y; C[62 + k * 4] = m.a; C[63 + k * 4] = m.me && !reducedMotion.matches ? mowing : 0;
     const [r, gg, b] = hslToRgb(m.hue, m.me ? 0.72 : 0.58, m.me ? 0.56 : 0.5);
-    C[92 + k * 4] = r; C[93 + k * 4] = gg; C[94 + k * 4] = b;
+    C[MOWER_COL0 + k * 4] = r; C[MOWER_COL0 + 1 + k * 4] = gg; C[MOWER_COL0 + 2 + k * 4] = b;
   });
   F.device.queue.writeBuffer(F.cam, 0, C);
 
