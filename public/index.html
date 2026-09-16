@@ -376,16 +376,27 @@ const GROUND_RES = 4, GROUND_MARGIN = 12;
 let bakeGround = false;
 const PEER_TIMEOUT = 4000;
 /**
+ * How often a Mower reports itself to the Lawn, and how often it does so
+ * while it stands still. Every report costs the Lawn, so a Mower that has
+ * nothing new to say says it seldom. See "What a report costs" in CONTEXT.md.
+ *
+ * A Mower that stops and drives off again is drawn sliding out of the spot it
+ * stood in, because the two reports it sits between are that far apart. Half
+ * a second is short enough that it reads as a Mower pulling away.
+ */
+const SEND_MS = 100;
+const STILL_SEND_MS = 500;
+/**
  * A remote Mower is drawn where it really was this long ago, so there is
  * always a pair of real reports to sit between. Nothing is ever predicted
  * forward: a Mower turns too sharply for that to be anything but overshoot.
  *
- * A Mower reports every 80 ms. Two intervals is the usual choice, but one
- * lost report then leaves a gap exactly as wide as the buffer, and the Mower
- * stalls and jumps. Three intervals absorbs a lost report and measures far
- * smoother; a fourth buys almost nothing for another 80 ms of delay.
+ * Three reporting intervals. Two is the usual choice, but one lost report
+ * then leaves a gap exactly as wide as the buffer, and the Mower stalls and
+ * jumps. Three absorbs a lost report and measures far smoother; a fourth buys
+ * almost nothing for another interval of delay.
  */
-const INTERP_DELAY = 240;
+const INTERP_DELAY = SEND_MS * 3;
 const COLLISION_RADIUS = MOWER_SCALE * 0.85;
 /**
  * A Mower that is bumped is dazed this long: it takes no throttle and no
@@ -619,6 +630,10 @@ function connect() {
   ws.addEventListener("open", () => {
     if (ws !== socket) { ws.close(); return; }
     retry = 500;
+    // A fresh socket has said nothing yet, so the next report is news however
+    // still the Mower is standing. The Lawn has to be told where this Mower
+    // is before it can cut anything for it.
+    sentX = sentY = sentA = null;
     // Say which Mower Key this browser holds, and say it in a message. A Key
     // in the address of the socket is written down by every machine between
     // here and the Lawn, and the Key is the whole of the proof of who a Mower
@@ -964,7 +979,12 @@ questToggle.addEventListener("click", () => {
 });
 layoutQuests();
 
-let sendAt = 0, moved = false, posAt = 0;
+/**
+ * When the last report went out, and what it said. A report that repeats the
+ * last one tells the Lawn nothing and still costs it, so a Mower that stands
+ * still says so slowly. See "What a report costs" in CONTEXT.md.
+ */
+let sendAt = 0, sentX = null, sentY = null, sentA = null;
 const bumps = [];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const lastContact = new Map();
@@ -1063,23 +1083,23 @@ function drive(dt) {
   const px = me.x, py = me.y;
   moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, now);
 
-  if (px !== me.x || py !== me.y) {
-    cut(px, py, me.x, me.y, me.a, true);
-    moved = true;
-  }
+  if (px !== me.x || py !== me.y) cut(px, py, me.x, me.y, me.a, true);
 
   if (now - positionSavedAt > 500) { savePosition(); positionSavedAt = now; }
-  // A Mow Stroke says where the Mower is, not where the swath starts. The
-  // Lawn cuts from where it last saw this Mower, so a Mower cannot name a
-  // start it never drove from, and a Mower the Lawn has lost cuts nothing
-  // until the Lawn has seen it again.
-  if (connected && moved && now - sendAt > 40) {
-    send({ t: "mow", x: me.x, y: me.y });
-    moved = false; sendAt = now;
-  }
-  if (connected && now - posAt > 80) {
-    send({ t: "pos", x: me.x, y: me.y, a: me.a });
-    posAt = now;
+  // One report says where the Mower is and which way it points. The Lawn cuts
+  // from where it last saw this Mower to there and shows it to the others
+  // from the same message, so a Mower cannot name a start it never drove
+  // from, and a Mower the Lawn has lost cuts nothing until the Lawn has seen
+  // it again. The swath the Lawn cuts is a straight one between two reports,
+  // which at this rate is a tenth of the width of the Mower: the grass comes
+  // off where the Mower drove. Your own Lawn is cut every frame regardless,
+  // so nothing about the driving reads slower.
+  if (connected && now - sendAt > SEND_MS) {
+    const news = me.x !== sentX || me.y !== sentY || me.a !== sentA;
+    if (news || now - sendAt > STILL_SEND_MS) {
+      send({ t: "mow", x: me.x, y: me.y, a: me.a });
+      sentX = me.x; sentY = me.y; sentA = me.a; sendAt = now;
+    }
   }
   const renderTime = Date.now() + clockOffset - INTERP_DELAY;
   for (const [id, p] of peers) {
