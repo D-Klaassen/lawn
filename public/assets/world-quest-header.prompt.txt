@@ -1,0 +1,7 @@
+Mode: built-in image_gen
+Use case: stylized-concept
+Asset type: production game UI header ornament for a World Quest Tracker.
+Primary request: a restrained wide horizontal antique-gold fantasy quest tracker header, inspired by the attached reference's delicate gold horizontal rules and dark translucent background. A narrow dark forest-green weathered metal nameplate with very fine aged brass top and bottom rules, tiny curled vine flourishes at both ends and one small circular clover seal at the far left. Hand-painted classic fantasy MMORPG interface texture, elegant and readable, not a chunky wooden sign.
+Composition: one straight-on horizontal ornament, 6:1 proportions centered on a transparent canvas, filling the width, generous empty central inset for live HTML heading. All decorative details contained within the silhouette.
+Text: none.
+Constraints: genuinely transparent background outside the header, no letters, no mockup, no scenery, no progress bars, no extra objects. Dark muted inset and warm gold edges; restrained ornament so live gold serif text reads clearly.
