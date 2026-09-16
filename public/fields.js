@@ -35,17 +35,15 @@ export function fieldProgress(tiles, heightAt) {
 }
 
 export function createFieldQuests() {
-  const tracker = document.getElementById('field-quest');
-  const title = document.getElementById('field-name');
-  const progress = document.getElementById('field-progress');
-  const meter = document.getElementById('field-meter');
-  const status = document.getElementById('field-status');
   const banner = document.getElementById('field-banner');
   const bannerTitle = document.getElementById('field-banner-name');
   const bannerLabel = document.getElementById('field-banner-label');
+  const list = document.getElementById('world-quest-list');
+  const summary = document.getElementById('world-quest-summary');
   let width = 0, height = 0, fields = [];
+  let rows = [];
   let active = -1, candidate = -1, candidateSince = 0, checkedAt = -Infinity;
-  let completed = false, hideBanner;
+  let hideBanner;
 
   function announce(name, label) {
     clearTimeout(hideBanner);
@@ -61,32 +59,47 @@ export function createFieldQuests() {
       width = w; height = h;
       fields = buildFields(w, h);
       active = candidate = -1;
-      tracker.hidden = true;
+      checkedAt = -Infinity;
+      rows = fields.map(field => {
+        const row = document.createElement('li');
+        row.className = 'world-quest';
+        row.innerHTML = `<span class="world-quest-badge" aria-hidden="true"></span><div class="world-quest-copy"><div class="world-quest-heading"><span class="world-quest-title"></span><span class="world-quest-percent">0%</span></div><span class="world-quest-status"></span><progress max="100" value="0"></progress></div>`;
+        row.querySelector('.world-quest-title').textContent = field.name;
+        const meter = row.querySelector('progress');
+        meter.setAttribute('aria-label', `${field.name} grass cut`);
+        return { row, meter, badge: row.querySelector('.world-quest-badge'), status: row.querySelector('.world-quest-status'), percent: row.querySelector('.world-quest-percent'), completed: false };
+      });
+      list.replaceChildren(...rows.map(({ row }) => row));
+      summary.textContent = '0 / 6 completed';
     },
-    update(x, y, now, heightAt, connected) {
+    update(x, y, now, heightAt) {
       const next = fieldAt(x, y, width, height);
       // Crossing a path keeps the last objective until the next field is entered.
       if (next !== candidate) { candidate = next; candidateSince = now; }
       let entered = false;
       if (next >= 0 && next !== active && now - candidateSince >= 450) {
-        active = next; completed = false; entered = true;
-        title.textContent = fields[active].name;
-        tracker.hidden = false;
+        active = next; entered = true;
         announce(fields[active].name, 'Field quest discovered');
+        rows.forEach(({ row }, id) => row.classList.toggle('active', id === active));
       }
-      if (active < 0 || (!entered && now - checkedAt < 500)) return;
+      if (!entered && now - checkedAt < 500) return;
       checkedAt = now;
-      const value = fieldProgress(fields[active].tiles, heightAt);
-      const complete = value >= 100 - 1e-7;
-      const display = complete ? '100' : (Math.floor(value * 10) / 10).toFixed(1);
-      progress.textContent = `${display}% cut`;
-      meter.value = value;
-      status.textContent = !connected ? 'Reconnecting…' : complete ? 'Field cleared' : 'Mow the field · shared progress';
-      tracker.classList.toggle('complete', complete);
-      if (complete && !completed) {
-        announce(fields[active].name, entered ? 'Field already cleared' : 'Field quest complete');
-        completed = true;
-      }
+      rows.forEach((quest, id) => {
+        if (quest.completed) return;
+        const value = fieldProgress(fields[id].tiles, heightAt);
+        const complete = value >= 100 - 1e-7;
+        // Reserve 100% for completion, even when the remaining grass rounds away.
+        const percent = complete ? 100 : Math.min(99, Math.floor(value + 1e-7));
+        quest.meter.value = value;
+        quest.percent.textContent = `${percent}%`;
+        if (!complete) return;
+        quest.completed = true;
+        quest.row.classList.add('completed');
+        quest.badge.textContent = '✓';
+        quest.status.textContent = 'Completed';
+        announce(fields[id].name, 'World quest completed');
+      });
+      summary.textContent = `${rows.filter(quest => quest.completed).length} / ${fields.length} completed`;
     },
   };
 }
