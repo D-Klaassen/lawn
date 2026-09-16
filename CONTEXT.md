@@ -42,28 +42,53 @@ change. It is a debounce, not a simulation step.
 
 ## Presence
 
-A Mower reports its position with `{t:"pos"}`. The server relays it and stores
-nothing, because a position has no meaning after the Mower leaves. A client
-forgets a Mower it has not heard from for 4 seconds. Hibernation therefore
-costs nothing: there is no presence state to lose.
+A Mower reports its position with `{t:"pos"}`. The server relays it and keeps
+nothing on disk, because a position has no meaning after the Mower leaves. A
+client forgets a Mower it has not heard from for 4 seconds. Hibernation
+therefore costs almost nothing: a Lawn that wakes has forgotten where each
+Mower stands, and the next Mow Stroke says it again.
 
-## A Mow Stroke has a maximum length
+## The Lawn decides where a Mower is
 
-The server clamps every Mow Stroke to `MAX_STROKE` Tiles, measured back from
-the end the Mower is at now. A Mower cannot cross the Lawn between two
-messages, so a longer stroke is either a bug or an attack.
+A Mow Stroke says where the Mower is now. It does not say where the swath
+starts. The server holds a position for each Mower and cuts from there to the
+new one, so the start of a swath is always the end of the one before it, and
+a client cannot name a place it never drove from.
 
-It was a bug: the client banked the start of a stroke while the socket was
-down and sent the whole drive as one segment on reconnect, which cut a
-straight swath across everything in between. The client no longer banks while
-disconnected, and the server no longer trusts it to.
+That position moves no faster than a Mower drives: `MAX_SPEED` Tiles a second,
+which is the `MAX_V` of the client. Travel is a budget in Tiles, and not a
+limit for each message, because messages come in bursts after a stall and a
+Mower held up by the line did drive the whole way. The budget fills at
+`MAX_SPEED * SPEED_TOLERANCE` and holds `TRAVEL_BANK_SECONDS` of driving. When
+a client says it went further, the server moves it as far as the budget
+allows and does not cut the remainder of the swath.
+
+A client that is rewritten thus gets no advantage. It can send a Mow Stroke
+every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
+phone. A reported position is also pulled back to within reach of the last Mow
+Stroke, so each Mower is seen where it mows.
+
+Before this the server only clamped a stroke to `MAX_STROKE` Tiles, measured
+back from the end the Mower gave. Forty of those in a second cut 240 Tiles a
+second. The clamp also threw away the swath of an honest Mower whose messages
+were held up, and told that Mower nothing.
+
+Two holes stay open, because they are cheap and what they let through is not:
+
+- A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
+  it hibernated — is believed one time. Its first Mow Stroke only says where
+  it starts and cuts nothing, so the cost of a teleport is one reconnection
+  for one stroke.
+- The score in a position report is still the tally of the client. The server
+  relays it and does not count blades itself.
 
 ## Agreement between client and server
 
 The client applies a Mow Stroke immediately, before the server confirms it.
 The server can refuse a Mow Stroke when the Mower is over the rate budget
-(`STROKE_RATE` per second). Then the two lawns disagree. To correct this, the
-server sends a new Snapshot to that Mower. Keep the mow maths in
+(`STROKE_RATE` per second), and it can cut less than the Mower asked for when
+the Mower is over its travel budget. Then the two lawns disagree. To correct
+this, the server sends a new Snapshot to that Mower. Keep the mow maths in
 `src/index.ts` and `public/index.html` identical.
 
 The client sends a maximum of one Mow Stroke per frame. The Mow Stroke covers
