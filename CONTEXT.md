@@ -48,6 +48,26 @@ client forgets a Mower it has not heard from for 4 seconds. Hibernation
 therefore costs almost nothing: a Lawn that wakes has forgotten where each
 Mower stands, and the next Mow Stroke says it again.
 
+## An Emote is read from across the Lawn
+
+An Emote is a card in the air, and a card too small is a card nobody reads at
+the far side of a field. The card is therefore wide, and two things keep it
+clear of the Mower that sent it.
+
+The card is measured in pixels and the Mower in world units, so the two are
+tied at the top of the Mower and the card hangs its own height above that
+point. A card placed at a world height instead sinks into the handlebar on a
+short window, where one world unit is worth fewer pixels.
+
+The size then falls with distance, against the Mower you drive: your own card
+never changes size, and a card far away is smaller, so the Lawn keeps its
+depth. It never falls below a size that can be read.
+
+The rest is motion, and motion is what says an Emote is new: the card springs
+past its size and back, breathes where it hangs, and lifts away as it ages
+out. A ring leaves it the moment it lands, for the Mower who was looking
+elsewhere. All of it stands still for a visitor who asks for less motion.
+
 ## The Lawn decides where a Mower is
 
 A Mow Stroke says where the Mower is now. It does not say where the swath
