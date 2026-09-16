@@ -274,7 +274,7 @@ export class Lawn extends DurableObject {
     if (!from) {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
-      this.places.set(ws, { x, y });
+      this.seed(ws, x, y);
       return;
     }
 
@@ -398,6 +398,17 @@ export class Lawn extends DurableObject {
   }
 
   /**
+   * Put a Mower on the Lawn where it says it is, with no travel banked. A
+   * fresh socket must earn its travel exactly like the Mower before it:
+   * without this a Mower could reconnect for a full bank, cut a long swath at
+   * once, drop the socket and come straight back for another.
+   */
+  private seed(ws: WebSocket, x: number, y: number): void {
+    this.places.set(ws, { x, y });
+    this.travelBudgets.set(ws, { tokens: 0, refilledAt: Date.now() });
+  }
+
+  /**
    * Move a Mower from where the Lawn holds it towards where it says it is,
    * and no further than its travel allows. The answer is the far end of the
    * swath: it is the claim itself when the Mower kept to the speed of a
@@ -427,7 +438,7 @@ export class Lawn extends DurableObject {
   private within(ws: WebSocket, x: number, y: number): Place {
     const place = this.places.get(ws);
     if (!place) {
-      this.places.set(ws, { x, y });
+      this.seed(ws, x, y);
       return { x, y };
     }
     const dx = x - place.x;

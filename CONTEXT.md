@@ -63,6 +63,13 @@ Mower held up by the line did drive the whole way. The budget fills at
 a client says it went further, the server moves it as far as the budget
 allows and does not cut the remainder of the swath.
 
+A new socket starts that budget empty. A full budget on arrival was worth 15
+Tiles of swath to anyone who opened a socket, cut, dropped it and came back,
+which is quicker than driving: 24 sockets cut 84 Tiles a second that way. An
+empty budget makes a reconnection worth 1 Tile a second, and costs an honest
+Mower nothing, because its first Mow Stroke only marks where it starts and its
+second comes 40 ms later, by which time it has earned the 0.5 Tiles it needs.
+
 A client that is rewritten thus gets no advantage. It can send a Mow Stroke
 every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
 phone. A reported position is also pulled back to within reach of the last Mow
@@ -77,8 +84,14 @@ Two holes stay open, because they are cheap and what they let through is not:
 
 - A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
   it hibernated — is believed one time. Its first Mow Stroke only says where
-  it starts and cuts nothing, so the cost of a teleport is one reconnection
-  for one stroke.
+  it starts and cuts nothing, so a reconnection buys a place to stand and no
+  grass.
+- One person can be many Mowers. Every socket earns its own travel, so eight
+  sockets cut what eight visitors cut, and the Lawn cannot tell the difference
+  without counting by address. Counting by address would also throttle a house
+  or a school behind one address, so it is a decision and not an oversight.
+- A new socket also costs the Lawn a whole Snapshot, 110 kB. Opening sockets
+  is therefore cheaper for the sender than for the Lawn.
 - The score in a position report is still the tally of the client. The server
   relays it and does not count blades itself.
 
