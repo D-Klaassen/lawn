@@ -131,7 +131,10 @@ export class Lawn extends DurableObject {
       // screens but never keeps it, exactly like the position.
       const raw = Number(message.s);
       const s = Number.isFinite(raw) && raw > 0 ? Math.floor(Math.min(raw, 1e12)) : 0;
-      this.broadcast(JSON.stringify({ t: "peer", id, x, y, a, s }), ws);
+      // Stamp the report. A client draws other Mowers slightly in the past,
+      // between two reports, and it needs to know when each one was really
+      // made: the gaps between arrivals are network jitter, not movement.
+      this.broadcast(JSON.stringify({ t: "peer", id, x, y, a, s, n: Date.now() }), ws);
       return;
     }
     if (message?.t === "emote") {

@@ -182,6 +182,17 @@ const SAMPLES = 1;       // Broad WebGPU support and the lowest 4K fill cost.
 const MOWER_SCALE = 2.6; // the deck should about match the cut width
 const SHADOW_SIZE = 1536;
 const PEER_TIMEOUT = 4000;
+/**
+ * A remote Mower is drawn where it really was this long ago, so there is
+ * always a pair of real reports to sit between. Nothing is ever predicted
+ * forward: a Mower turns too sharply for that to be anything but overshoot.
+ *
+ * A Mower reports every 80 ms. Two intervals is the usual choice, but one
+ * lost report then leaves a gap exactly as wide as the buffer, and the Mower
+ * stalls and jumps. Three intervals absorbs a lost report and measures far
+ * smoother; a fourth buys almost nothing for another 80 ms of delay.
+ */
+const INTERP_DELAY = 240;
 const COLLISION_RADIUS = MOWER_SCALE * 0.85;
 let myId = "";
 /** Your own paint. It comes from your id, so every screen agrees on it. */
@@ -217,7 +228,7 @@ function throwClippings(x, y, heading, amount) {
   if (clippings.length > 160) clippings.splice(0, clippings.length - 160);
 }
 
-/** Other Mowers: id -> { x, y, a, tx, ty, seen, hue }. */
+/** Other Mowers: id -> { x, y, a, buf, score, seen, hue }. */
 const peers = new Map();
 
 /** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
@@ -331,8 +342,13 @@ function connect() {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
       strokes = m.strokes;
     } else if (m.t === "peer") {
-      const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id) };
-      p.tx = m.x; p.ty = m.y; p.a = m.a; p.score = m.s ?? 0; p.seen = performance.now();
+      const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id), buf: [] };
+      p.score = m.s ?? 0;
+      p.seen = performance.now();
+      // Keep the report on the shared clock, the same one the Tiles use.
+      const at = Number.isFinite(m.n) ? m.n : Date.now() + clockOffset;
+      const newest = p.buf[p.buf.length - 1];
+      if (!newest || at > newest.t) p.buf.push({ t: at, x: m.x, y: m.y, a: m.a });
       peers.set(m.id, p);
     } else if (m.t === "emoted") {
       const p = peers.get(m.id);
@@ -530,11 +546,37 @@ function drive(dt) {
     socket.send(JSON.stringify({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) }));
     posAt = now;
   }
+  const renderTime = Date.now() + clockOffset - INTERP_DELAY;
   for (const [id, p] of peers) {
     if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
-    p.x += (p.tx - p.x) * Math.min(1, dt * 12);
-    p.y += (p.ty - p.y) * Math.min(1, dt * 12);
+    interpolatePeer(p, renderTime);
   }
+}
+
+/** Blend headings as vectors, so they take the short way round at ±pi. */
+function blendAngle(a0, a1, k) {
+  return Math.atan2(Math.sin(a0) + (Math.sin(a1) - Math.sin(a0)) * k,
+                    Math.cos(a0) + (Math.cos(a1) - Math.cos(a0)) * k);
+}
+
+/**
+ * Put a Mower where it was at renderTime, between the two reports that
+ * bracket that moment. When the reports run out the Mower holds at the last
+ * real one rather than guessing past it.
+ */
+function interpolatePeer(p, renderTime) {
+  const buf = p.buf;
+  // Drop reports the render time has already passed, but keep the pair.
+  while (buf.length > 2 && buf[1].t <= renderTime) buf.shift();
+  const from = buf[0];
+  if (!from) return;
+  const to = buf[1];
+  if (!to || renderTime <= from.t) { p.x = from.x; p.y = from.y; p.a = from.a; return; }
+  if (renderTime >= to.t) { p.x = to.x; p.y = to.y; p.a = to.a; return; }
+  const k = (renderTime - from.t) / (to.t - from.t);
+  p.x = from.x + (to.x - from.x) * k;
+  p.y = from.y + (to.y - from.y) * k;
+  p.a = blendAngle(from.a, to.a, k);
 }
 
 function allMowers() {
