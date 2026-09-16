@@ -106,8 +106,6 @@ Two holes stay open, because they are cheap and what they let through is not:
   it hibernated — is believed one time. Its first Mow Stroke only says where
   it starts and cuts nothing, so a reconnection buys a place to stand and no
   grass.
-- The score in a position report is still the tally of the client. The server
-  relays it and does not count blades itself.
 
 ## One address, twelve Mowers
 
@@ -155,6 +153,33 @@ of NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
 score that is not a finite number, so nothing that is not a number reaches the
 screen or the storage. The board reads the score of another Mower the same
 way, because `??` passes a NaN through and only catches a null.
+
+## The Lawn counts the blades
+
+A position report used to carry the score of the Mower that sent it, and the
+server passed it on. A rewritten client therefore had whatever score it liked,
+and one wrote seven hundred million on the board.
+
+The server counts instead. It already works out every Tile a Mow Stroke cuts,
+and it holds the moment each Tile was last mown and the Growth Rate of that
+Tile, so it knows the Blade Height it is about to take off. It adds that up
+per Mower and puts its own number in the report. A client is not asked.
+
+This costs a second copy of two functions the client already has: `fieldAt`,
+for the Tiles that are path and verge and grow nothing, and the Blade Height
+curve. They sit beside the Growth Rate table, which was already a copy for the
+same reason. All of them must stay identical to `public/index.html` and
+`public/fields.js`, or the two sides count different grass.
+
+The count is the score of one visit, because a socket is all the Lawn knows of
+a Mower: there is no name to add a visit to. The headline score stays the
+tally of every visit, kept by the browser, and is still only as honest as the
+browser. The board says "this visit" and shows what the Lawn counted, which
+makes it the one number on the screen that a rewritten client cannot invent.
+
+The count lives in memory and is written to the socket every
+`TALLY_SAVE_MS`, so a Mower that parks while the Lawn hibernates comes back
+to its score and not to zero.
 
 ## Who is on the Lawn
 

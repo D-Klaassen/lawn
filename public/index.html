@@ -290,7 +290,7 @@
   <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div></div>
 </div>
 <aside id="board" hidden aria-label="Mowers on the Lawn">
-  <span class="quest-label">On the Lawn</span>
+  <span class="quest-label">On the Lawn &middot; this visit</span>
   <ol id="board-list"></ol>
 </aside>
 <a id="credit" href="https://github.com/Onnokh" target="_blank" rel="noopener noreferrer">Made by Onkie</a>
@@ -384,6 +384,13 @@ let mownAt = null;       // absolute ms per Tile
 let mowDir = null;       // heading of the cut per Tile
 let clockOffset = 0, connected = false, socket = null;
 let strokes = 0, bladesCut = initialScore, mowerCount = 1;
+/**
+ * The blades cut since this page opened. The headline score is the tally of
+ * every visit, kept in this browser and nowhere else, so the Lawn cannot
+ * vouch for it. The board shows this one instead, because the Lawn counts the
+ * same blades for every other Mower and the two must be comparable.
+ */
+let sessionCut = 0;
 let mowing = 0;
 const clippings = [];
 const settling = new Map();
@@ -525,7 +532,7 @@ function cut(x0, y0, x1, y1, heading, mine) {
         const height = heightAt(i, now);
         // Only grass that is really there counts, so the score can never take
         // a number that is not a number.
-        if (height > 0) bladesCut += height;
+        if (height > 0) { bladesCut += height; sessionCut += height; }
         if (height > 0.1) harvested += height;
       }
       const standing = heightAt(i, now);
@@ -688,8 +695,10 @@ addEventListener("blur", () => {
 const held = (...k) => k.some((x) => keys.has(x));
 
 /**
- * The board: who is mowing now and how much each has cut. It is built from
- * presence alone, so a Mower that goes quiet drops off it by itself.
+ * The board: who is mowing now and how much each has cut on this visit. It is
+ * built from presence alone, so a Mower that goes quiet drops off it by
+ * itself. Every score on it is counted by the Lawn, so the board is the one
+ * number on the screen a rewritten client cannot make up.
  */
 const board = document.getElementById("board");
 const boardList = document.getElementById("board-list");
@@ -702,7 +711,7 @@ function refreshBoard() {
   for (const [id, p] of peers) {
     if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: nameOf(id), score: p.score ?? 0, mine: false });
   }
-  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(bladesCut), mine: true });
+  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(sessionCut), mine: true });
   rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   boardList.replaceChildren(...rows.map((r) => {
     const li = document.createElement("li");
@@ -923,7 +932,7 @@ function drive(dt) {
     moved = false; sendAt = now;
   }
   if (connected && now - posAt > 80) {
-    send({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) });
+    send({ t: "pos", x: me.x, y: me.y, a: me.a });
     posAt = now;
   }
   const renderTime = Date.now() + clockOffset - INTERP_DELAY;
