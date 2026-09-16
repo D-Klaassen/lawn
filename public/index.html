@@ -336,8 +336,11 @@ const help = document.getElementById("help");
 const mowerCountEl = document.getElementById("mower-count");
 
 function showMowerCount(count) {
+  if (count === shownMowerCount) return;
+  shownMowerCount = count;
   mowerCountEl.textContent = `${count} ${count === 1 ? 'mower' : 'mowers'} active`;
 }
+let shownMowerCount = -1;
 
 const PATCH = 90;        // tiles of grass generated around the camera target
 const CELL3 = 0.28;      // blade spacing in tiles
@@ -583,8 +586,7 @@ function connect() {
       fieldQuests.resize(W, H);
       restorePosition();
       clockOffset = m.now - Date.now();
-      strokes = m.strokes; mowerCount = m.mowers;
-      showMowerCount(mowerCount);
+      strokes = m.strokes;
     } else if (m.t === "mow") {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
       strokes = m.strokes;
@@ -602,10 +604,11 @@ function connect() {
       if (p) { p.emote = m.e; p.emoteAt = performance.now(); }
     } else if (m.t === "gone") {
       peers.delete(m.id);
-    } else if (m.t === "mowers") {
-      mowerCount = m.mowers;
-      showMowerCount(mowerCount);
     }
+    // The Lawn also says how many sockets it holds, in the hello and in a
+    // `mowers` message. That number counts sockets, and a socket that died
+    // without saying so is still one, so the heading counts Mowers that have
+    // spoken instead. See "Who is on the Lawn" in CONTEXT.md.
   });
   const dropped = () => {
     if (ws !== socket || reconnecting) return;
@@ -928,6 +931,10 @@ function drive(dt) {
     if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
     interpolatePeer(p, renderTime);
   }
+  // The heading and the board now count the same Mowers: the ones that have
+  // spoken, and you.
+  mowerCount = peers.size + 1;
+  showMowerCount(mowerCount);
 }
 
 /** Blend headings as vectors, so they take the short way round at ±pi. */

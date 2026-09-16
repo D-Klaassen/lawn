@@ -156,6 +156,21 @@ score that is not a finite number, so nothing that is not a number reaches the
 screen or the storage. The board reads the score of another Mower the same
 way, because `??` passes a NaN through and only catches a null.
 
+## Who is on the Lawn
+
+The heading over the board and the board itself must count the same Mowers,
+and they did not. The board is built from presence: a Mower that has not
+reported for `PEER_TIMEOUT` drops off it. The heading came from the server,
+which counted sockets. A socket is not a Mower — a tab that is put in the
+background stops reporting while its socket stays open, and a socket that
+died without saying so is counted for ten minutes and more. Five sockets and
+two Mowers on the board was the normal reading of that, not a fault.
+
+The heading now counts what the board counts: the Mowers that have spoken,
+and you. The server still says how many sockets it holds, in the hello and in
+a `mowers` message, because that is the honest answer to a different question
+and it is what the address count is made of. Nothing on the screen uses it.
+
 ## Agreement between client and server
 
 The client applies a Mow Stroke immediately, before the server confirms it.
