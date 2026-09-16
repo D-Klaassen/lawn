@@ -40,6 +40,10 @@ let shown = Math.round(initialScore);
 let updatedAt = -Infinity;
 
 export function updateScore(value, now) {
+  // A score that is not a number never reaches the screen or the storage. It
+  // would stay on the screen until the visitor reloads, and a saved "NaN"
+  // reads back as zero, which throws away the whole tally of that visitor.
+  if (!Number.isFinite(value) || value < 0) return;
   latest = value;
   if (now - savedAt >= 500) { saveScore(); savedAt = now; }
   const next = Math.round(value);

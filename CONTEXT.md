@@ -82,6 +82,20 @@ Two holes stay open, because they are cheap and what they let through is not:
 - The score in a position report is still the tally of the client. The server
   relays it and does not count blades itself.
 
+## The score is a sum, so it must never take a NaN
+
+The score adds one Blade Height for each Tile the Mower cuts. A sum has no
+memory of its parts: one addend that is not a number makes every later score
+NaN, for as long as the page is open. It is worse than that, because the score
+is written to `localStorage` twice a second and a saved `"NaN"` reads back as
+zero. One bad frame therefore throws away the whole tally of a visitor.
+
+Three gates stop this. `heightAt` answers 0 for a Tile it cannot date, instead
+of NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
+score that is not a finite number, so nothing that is not a number reaches the
+screen or the storage. The board reads the score of another Mower the same
+way, because `??` passes a NaN through and only catches a null.
+
 ## Agreement between client and server
 
 The client applies a Mow Stroke immediately, before the server confirms it.

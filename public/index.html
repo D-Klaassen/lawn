@@ -450,7 +450,9 @@ function heightAt(i, now) {
   const age = now - mownAt[i];
   const regrow = regrowMs[i];
   if (age >= regrow) return 1;
-  if (age <= 0) return 0;
+  // A Tile the client cannot date reads as mown. Without this the answer is
+  // NaN, and one NaN in the score stays there for the rest of the session.
+  if (!(age > 0) || !(regrow > 0)) return 0;
   const t = age / regrow;
   return 1 - (1 - t) * (1 - t);
 }
@@ -512,7 +514,9 @@ function cut(x0, y0, x1, y1, heading, mine) {
       const i = y * W + x;
       if (mine && onGrass(x + 0.5, y + 0.5)) {
         const height = heightAt(i, now);
-        bladesCut += height;
+        // Only grass that is really there counts, so the score can never take
+        // a number that is not a number.
+        if (height > 0) bladesCut += height;
         if (height > 0.1) harvested += height;
       }
       const standing = heightAt(i, now);
@@ -580,7 +584,7 @@ function connect() {
       strokes = m.strokes;
     } else if (m.t === "peer") {
       const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id), buf: [] };
-      p.score = m.s ?? 0;
+      p.score = Number.isFinite(m.s) ? m.s : 0;
       p.seen = performance.now();
       // Keep the report on the shared clock, the same one the Tiles use.
       const at = Number.isFinite(m.n) ? m.n : Date.now() + clockOffset;
