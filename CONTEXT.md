@@ -13,16 +13,16 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   capsule with radius `MOW_RADIUS` around that line.
 - **Mower** — one connected visitor.
 - **Regrowth** — the return of Blade Height to 1. A Lawn nobody mows is
-  overgrown again the next day.
-- **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 20 to
-  28 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
+  overgrown again the same day.
+- **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 2 to
+  6 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
   so the grass comes back in slow ground and quick ground. It is a pure
   function of the position of the Tile: no one stores it and no one sends it,
   and both sides build the same table.
 - **Snapshot** — how far each Tile is through its Regrowth, from 0 to
-  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. A Regrowth is longer than 65535
-  seconds, and no two Tiles share a Regrowth, so the wire carries the
-  fraction, not the age in seconds.
+  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Regrowth, so
+  the wire carries the fraction and not the age in seconds. The wire therefore
+  stays the same when the Growth Rate changes.
 
 ## Why there is no server tick
 
@@ -42,28 +42,67 @@ change. It is a debounce, not a simulation step.
 
 ## Presence
 
-A Mower reports its position with `{t:"pos"}`. The server relays it and stores
-nothing, because a position has no meaning after the Mower leaves. A client
-forgets a Mower it has not heard from for 4 seconds. Hibernation therefore
-costs nothing: there is no presence state to lose.
+A Mower reports its position with `{t:"pos"}`. The server relays it and keeps
+nothing on disk, because a position has no meaning after the Mower leaves. A
+client forgets a Mower it has not heard from for 4 seconds. Hibernation
+therefore costs almost nothing: a Lawn that wakes has forgotten where each
+Mower stands, and the next Mow Stroke says it again.
 
-## A Mow Stroke has a maximum length
+## The Lawn decides where a Mower is
 
-The server clamps every Mow Stroke to `MAX_STROKE` Tiles, measured back from
-the end the Mower is at now. A Mower cannot cross the Lawn between two
-messages, so a longer stroke is either a bug or an attack.
+A Mow Stroke says where the Mower is now. It does not say where the swath
+starts. The server holds a position for each Mower and cuts from there to the
+new one, so the start of a swath is always the end of the one before it, and
+a client cannot name a place it never drove from.
 
-It was a bug: the client banked the start of a stroke while the socket was
-down and sent the whole drive as one segment on reconnect, which cut a
-straight swath across everything in between. The client no longer banks while
-disconnected, and the server no longer trusts it to.
+That position moves no faster than a Mower drives: `MAX_SPEED` Tiles a second,
+which is the `MAX_V` of the client. Travel is a budget in Tiles, and not a
+limit for each message, because messages come in bursts after a stall and a
+Mower held up by the line did drive the whole way. The budget fills at
+`MAX_SPEED * SPEED_TOLERANCE` and holds `TRAVEL_BANK_SECONDS` of driving. When
+a client says it went further, the server moves it as far as the budget
+allows and does not cut the remainder of the swath.
+
+A client that is rewritten thus gets no advantage. It can send a Mow Stroke
+every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
+phone. A reported position is also pulled back to within reach of the last Mow
+Stroke, so each Mower is seen where it mows.
+
+Before this the server only clamped a stroke to `MAX_STROKE` Tiles, measured
+back from the end the Mower gave. Forty of those in a second cut 240 Tiles a
+second. The clamp also threw away the swath of an honest Mower whose messages
+were held up, and told that Mower nothing.
+
+Two holes stay open, because they are cheap and what they let through is not:
+
+- A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
+  it hibernated — is believed one time. Its first Mow Stroke only says where
+  it starts and cuts nothing, so the cost of a teleport is one reconnection
+  for one stroke.
+- The score in a position report is still the tally of the client. The server
+  relays it and does not count blades itself.
+
+## The score is a sum, so it must never take a NaN
+
+The score adds one Blade Height for each Tile the Mower cuts. A sum has no
+memory of its parts: one addend that is not a number makes every later score
+NaN, for as long as the page is open. It is worse than that, because the score
+is written to `localStorage` twice a second and a saved `"NaN"` reads back as
+zero. One bad frame therefore throws away the whole tally of a visitor.
+
+Three gates stop this. `heightAt` answers 0 for a Tile it cannot date, instead
+of NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
+score that is not a finite number, so nothing that is not a number reaches the
+screen or the storage. The board reads the score of another Mower the same
+way, because `??` passes a NaN through and only catches a null.
 
 ## Agreement between client and server
 
 The client applies a Mow Stroke immediately, before the server confirms it.
 The server can refuse a Mow Stroke when the Mower is over the rate budget
-(`STROKE_RATE` per second). Then the two lawns disagree. To correct this, the
-server sends a new Snapshot to that Mower. Keep the mow maths in
+(`STROKE_RATE` per second), and it can cut less than the Mower asked for when
+the Mower is over its travel budget. Then the two lawns disagree. To correct
+this, the server sends a new Snapshot to that Mower. Keep the mow maths in
 `src/index.ts` and `public/index.html` identical.
 
 The client sends a maximum of one Mow Stroke per frame. The Mow Stroke covers

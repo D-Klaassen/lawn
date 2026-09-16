@@ -10,22 +10,23 @@ const LAWN_HEIGHT = 192;
 const TILE_COUNT = LAWN_WIDTH * LAWN_HEIGHT;
 
 /**
- * Seconds a Tile needs to grow from mown to fully overgrown. No Tile grows at
- * the speed of its neighbour: the Growth Rate moves between these two bounds
- * across the Lawn, so the field comes back uneven, the way a real lawn does.
+ * Seconds a Tile needs to grow from mown to fully overgrown: 2 hours to 6
+ * hours. No Tile grows at the speed of its neighbour: the Growth Rate moves
+ * between these two bounds across the Lawn, so the field comes back uneven,
+ * the way a real lawn does.
  */
-const REGROW_MIN_SECONDS = 72000;
-const REGROW_MAX_SECONDS = 100800;
+const REGROW_MIN_SECONDS = 7200;
+const REGROW_MAX_SECONDS = 21600;
 /**
  * Width of one patch of like-minded grass, in Tiles. Below about ten the
  * Growth Rate reads as speckle on single Tiles instead of as slow ground.
  */
 const PATCH_TILES = 16;
 /**
- * Full scale of one Snapshot entry. A Regrowth is longer than 65535 seconds,
- * so a Snapshot carries how far a Tile is through its Regrowth, not its age
- * in seconds. One step is about 1.5 seconds, far below one part in 255 of
- * Blade Height.
+ * Full scale of one Snapshot entry. A Snapshot carries how far a Tile is
+ * through its Regrowth, not its age in seconds, so the wire does not change
+ * when the Regrowth does. One step is a third of a second at the slowest
+ * Growth Rate, far below one part in 255 of Blade Height.
  */
 const SNAPSHOT_SCALE = 65535;
 
@@ -71,11 +72,33 @@ function regrowTable(width: number, height: number): Float32Array {
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
 /** Radius of one Mow Stroke, in Tiles. */
 const MOW_RADIUS = 2.6;
+
 /**
- * Longest swath one Mow Stroke may cut. A Mower cannot cross the Lawn in one
- * message, so the server clamps the stroke to the end the Mower is at now.
+ * Fastest a Mower drives, in Tiles per second. It mirrors `MAX_V` in the
+ * client, and it is what makes a Mow Stroke cost time: the Lawn moves a Mower
+ * no faster than a Mower can drive, whatever the client says.
  */
-const MAX_STROKE = 6;
+const MAX_SPEED = 13;
+/**
+ * Room above that speed. A Mower pushed by another Mower moves without
+ * driving, and the two clocks are not the same clock.
+ */
+const SPEED_TOLERANCE = 1.15;
+/**
+ * Seconds of travel a Mower may bank. Messages arrive in bursts after a
+ * stall, and a Mower held up by the network really did drive the whole way,
+ * so the budget is a bank and not a limit per message. It is also the longest
+ * swath one Mow Stroke can cut: about 15 Tiles.
+ */
+const TRAVEL_BANK_SECONDS = 1;
+const TRAVEL_RATE = MAX_SPEED * SPEED_TOLERANCE;
+const TRAVEL_BANK = TRAVEL_RATE * TRAVEL_BANK_SECONDS;
+/**
+ * How far in front of its own last Mow Stroke a Mower may report itself. A
+ * Mow Stroke goes out every 40 ms and a position every 80 ms, so a position
+ * leads the Lawn by at most one frame of driving.
+ */
+const POSITION_SLACK = 2;
 
 /** Mow Strokes one Mower may send per second. */
 const STROKE_RATE = 40;
@@ -91,9 +114,14 @@ const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
 const PERSIST_DELAY_MS = 2000;
 
-/** A Mow Stroke is the swath swept between two points, not a single dot. */
+/**
+ * A Mow Stroke says where the Mower is now. The swath is from where the Lawn
+ * last saw that Mower to there, so the Mower cannot name its own starting
+ * point. `x1`/`y1` is the old name for the same point, for a tab that was
+ * open across a deploy.
+ */
 type ClientMessage =
-  | { t: "mow"; x0: number; y0: number; x1: number; y1: number }
+  | { t: "mow"; x: number; y: number; x1?: number; y1?: number }
   /** Where a Mower is, which way it points, and how much it has cut. */
   | { t: "pos"; x: number; y: number; a: number; s: number }
   /** Which Emote a Mower shows. Relayed, never stored. */
@@ -102,6 +130,12 @@ type ClientMessage =
 interface Budget {
   tokens: number;
   refilledAt: number;
+}
+
+/** Where the Lawn last saw a Mower, in Tiles. */
+interface Place {
+  x: number;
+  y: number;
 }
 
 export class Lawn extends DurableObject {
@@ -113,6 +147,15 @@ export class Lawn extends DurableObject {
   private posBudgets = new WeakMap<WebSocket, Budget>();
   private emoteBudgets = new WeakMap<WebSocket, Budget>();
   private resyncedAt = new WeakMap<WebSocket, number>();
+  /**
+   * Where the Lawn holds each Mower, and how much travel that Mower has left.
+   * A Mower is where the Lawn says it is, not where the client says it is.
+   * Both are forgotten when the Lawn hibernates, which costs nothing: a Lawn
+   * only hibernates when nobody is driving, and the next Mow Stroke from a
+   * Mower the Lawn has lost says where it starts and cuts nothing.
+   */
+  private places = new WeakMap<WebSocket, Place>();
+  private travelBudgets = new WeakMap<WebSocket, Budget>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -178,13 +221,17 @@ export class Lawn extends DurableObject {
     const id = (ws.deserializeAttachment() as { id?: string } | null)?.id ?? "?";
 
     if (message?.t === "pos") {
-      // Presence is ephemeral: relay it, store nothing. A Mower that goes
-      // quiet simply fades from the other screens.
+      // Presence is ephemeral: relay it and keep nothing on disk. A Mower
+      // that goes quiet simply fades from the other screens.
       if (!this.spendPos(ws)) return;
       const x = Number(message.x);
       const y = Number(message.y);
       const a = Number(message.a);
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(a)) return;
+      // A Mower shows itself where it mows. The report is pulled back to
+      // within reach of the last Mow Stroke, so a Mower that drives faster
+      // than a Mower can drive is seen at the speed of a Mower.
+      const seen = this.within(ws, x, y);
       // The score is the Mower's own tally. The Lawn carries it between
       // screens but never keeps it, exactly like the position.
       const raw = Number(message.s);
@@ -192,7 +239,10 @@ export class Lawn extends DurableObject {
       // Stamp the report. A client draws other Mowers slightly in the past,
       // between two reports, and it needs to know when each one was really
       // made: the gaps between arrivals are network jitter, not movement.
-      this.broadcast(JSON.stringify({ t: "peer", id, x, y, a, s, n: Date.now() }), ws);
+      this.broadcast(
+        JSON.stringify({ t: "peer", id, x: seen.x, y: seen.y, a, s, n: Date.now() }),
+        ws,
+      );
       return;
     }
     if (message?.t === "emote") {
@@ -207,13 +257,11 @@ export class Lawn extends DurableObject {
     }
     if (message?.t !== "mow") return;
 
-    const x0 = Number(message.x0);
-    const y0 = Number(message.y0);
-    const x1 = Number(message.x1);
-    const y1 = Number(message.y1);
-    for (const v of [x0, y0, x1, y1]) if (!Number.isFinite(v)) return;
-    if (Math.min(x0, x1) < -MOW_RADIUS || Math.max(x0, x1) > LAWN_WIDTH + MOW_RADIUS) return;
-    if (Math.min(y0, y1) < -MOW_RADIUS || Math.max(y0, y1) > LAWN_HEIGHT + MOW_RADIUS) return;
+    const x = Number(message.x ?? message.x1);
+    const y = Number(message.y ?? message.y1);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (x < -MOW_RADIUS || x > LAWN_WIDTH + MOW_RADIUS) return;
+    if (y < -MOW_RADIUS || y > LAWN_HEIGHT + MOW_RADIUS) return;
 
     // A Mower over budget gets the Lawn as the server sees it, so an optimistic
     // client never keeps a swath the server refused.
@@ -222,11 +270,34 @@ export class Lawn extends DurableObject {
       return;
     }
 
-    const [cx0, cy0] = clampStroke(x0, y0, x1, y1);
-    this.mow(cx0, cy0, x1, y1);
+    const from = this.places.get(ws);
+    if (!from) {
+      // The first Mow Stroke of a Mower only says where it starts. Nothing is
+      // cut, because the Lawn has no idea where that Mower came from.
+      this.places.set(ws, { x, y });
+      return;
+    }
+
+    // Drive the Mower towards where it says it is, as far as its travel
+    // allows. A client that says it moved further keeps a swath the Lawn
+    // refused, so it gets the Lawn as the server sees it.
+    const to = this.drive(ws, from, x, y);
+    this.places.set(ws, to);
+    if (to.x !== x || to.y !== y) this.resync(ws);
+    if (to.x === from.x && to.y === from.y) return;
+
+    this.mow(from.x, from.y, to.x, to.y);
     this.strokes += 1;
     this.broadcast(
-      JSON.stringify({ t: "mow", x0: cx0, y0: cy0, x1, y1, by: id, strokes: this.strokes }),
+      JSON.stringify({
+        t: "mow",
+        x0: from.x,
+        y0: from.y,
+        x1: to.x,
+        y1: to.y,
+        by: id,
+        strokes: this.strokes,
+      }),
       ws,
     );
     this.schedulePersist();
@@ -326,6 +397,49 @@ export class Lawn extends DurableObject {
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
   }
 
+  /**
+   * Move a Mower from where the Lawn holds it towards where it says it is,
+   * and no further than its travel allows. The answer is the far end of the
+   * swath: it is the claim itself when the Mower kept to the speed of a
+   * Mower, and a point on the way there when it did not.
+   */
+  private drive(ws: WebSocket, from: Place, x: number, y: number): Place {
+    const dx = x - from.x;
+    const dy = y - from.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance === 0) return { x, y };
+    const budget = this.refill(this.travelBudgets, ws, TRAVEL_RATE, TRAVEL_BANK);
+    if (distance <= budget.tokens) {
+      budget.tokens -= distance;
+      return { x, y };
+    }
+    const k = budget.tokens / distance;
+    budget.tokens = 0;
+    return { x: from.x + dx * k, y: from.y + dy * k };
+  }
+
+  /**
+   * Pull a reported position back to within reach of the last Mow Stroke of
+   * that Mower. Travel is spent by mowing, not by reporting: a Mow Stroke and
+   * the position that follows it are the same movement, and paying twice for
+   * it would hold back every honest Mower.
+   */
+  private within(ws: WebSocket, x: number, y: number): Place {
+    const place = this.places.get(ws);
+    if (!place) {
+      this.places.set(ws, { x, y });
+      return { x, y };
+    }
+    const dx = x - place.x;
+    const dy = y - place.y;
+    const distance = Math.hypot(dx, dy);
+    const reach = this.refill(this.travelBudgets, ws, TRAVEL_RATE, TRAVEL_BANK).tokens
+      + POSITION_SLACK;
+    if (distance <= reach) return { x, y };
+    const k = reach / distance;
+    return { x: place.x + dx * k, y: place.y + dy * k };
+  }
+
   private spend(ws: WebSocket): boolean {
     return this.take(this.budgets, ws, STROKE_RATE);
   }
@@ -339,14 +453,25 @@ export class Lawn extends DurableObject {
   }
 
   private take(budgets: WeakMap<WebSocket, Budget>, ws: WebSocket, rate: number): boolean {
-    const now = Date.now();
-    const budget = budgets.get(ws) ?? { tokens: rate, refilledAt: now };
-    budget.tokens = Math.min(rate, budget.tokens + ((now - budget.refilledAt) / 1000) * rate);
-    budget.refilledAt = now;
-    budgets.set(ws, budget);
+    const budget = this.refill(budgets, ws, rate, rate);
     if (budget.tokens < 1) return false;
     budget.tokens -= 1;
     return true;
+  }
+
+  /** Give a budget back the time that has gone by, and hand it over to spend. */
+  private refill(
+    budgets: WeakMap<WebSocket, Budget>,
+    ws: WebSocket,
+    rate: number,
+    capacity: number,
+  ): Budget {
+    const now = Date.now();
+    const budget = budgets.get(ws) ?? { tokens: capacity, refilledAt: now };
+    budget.tokens = Math.min(capacity, budget.tokens + ((now - budget.refilledAt) / 1000) * rate);
+    budget.refilledAt = now;
+    budgets.set(ws, budget);
+    return budget;
   }
 
   private announceMowers(): void {
@@ -374,16 +499,6 @@ export class Lawn extends DurableObject {
       }
     }
   }
-}
-
-/** Keep the far end of a Mow Stroke within reach of where the Mower is now. */
-function clampStroke(x0: number, y0: number, x1: number, y1: number): [number, number] {
-  const dx = x0 - x1;
-  const dy = y0 - y1;
-  const len = Math.hypot(dx, dy);
-  if (len <= MAX_STROKE) return [x0, y0];
-  const k = MAX_STROKE / len;
-  return [x1 + dx * k, y1 + dy * k];
 }
 
 export interface Env {

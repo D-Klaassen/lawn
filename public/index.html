@@ -450,7 +450,9 @@ function heightAt(i, now) {
   const age = now - mownAt[i];
   const regrow = regrowMs[i];
   if (age >= regrow) return 1;
-  if (age <= 0) return 0;
+  // A Tile the client cannot date reads as mown. Without this the answer is
+  // NaN, and one NaN in the score stays there for the rest of the session.
+  if (!(age > 0) || !(regrow > 0)) return 0;
   const t = age / regrow;
   return 1 - (1 - t) * (1 - t);
 }
@@ -512,7 +514,9 @@ function cut(x0, y0, x1, y1, heading, mine) {
       const i = y * W + x;
       if (mine && onGrass(x + 0.5, y + 0.5)) {
         const height = heightAt(i, now);
-        bladesCut += height;
+        // Only grass that is really there counts, so the score can never take
+        // a number that is not a number.
+        if (height > 0) bladesCut += height;
         if (height > 0.1) harvested += height;
       }
       const standing = heightAt(i, now);
@@ -580,7 +584,7 @@ function connect() {
       strokes = m.strokes;
     } else if (m.t === "peer") {
       const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id), buf: [] };
-      p.score = m.s ?? 0;
+      p.score = Number.isFinite(m.s) ? m.s : 0;
       p.seen = performance.now();
       // Keep the report on the shared clock, the same one the Tiles use.
       const at = Number.isFinite(m.n) ? m.n : Date.now() + clockOffset;
@@ -828,7 +832,7 @@ questToggle.addEventListener("click", () => {
 });
 layoutQuests();
 
-let sendAt = 0, sentFrom = null, posAt = 0;
+let sendAt = 0, moved = false, posAt = 0;
 const bumps = [];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const lastContact = new Map();
@@ -894,20 +898,20 @@ function drive(dt) {
   const px = me.x, py = me.y;
   moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, performance.now());
 
-  // Never bank a segment while the socket is down: it would be sent as one
-  // straight cut across everything driven in the meantime.
-  if (!connected) sentFrom = null;
-
   if (px !== me.x || py !== me.y) {
     cut(px, py, me.x, me.y, me.a, true);
-    if (sentFrom === null) sentFrom = { x: px, y: py };
+    moved = true;
   }
 
   const now = performance.now();
   if (now - positionSavedAt > 500) { savePosition(); positionSavedAt = now; }
-  if (connected && sentFrom && now - sendAt > 40) {
-    send({ t: "mow", x0: sentFrom.x, y0: sentFrom.y, x1: me.x, y1: me.y });
-    sentFrom = null; sendAt = now;
+  // A Mow Stroke says where the Mower is, not where the swath starts. The
+  // Lawn cuts from where it last saw this Mower, so a Mower cannot name a
+  // start it never drove from, and a Mower the Lawn has lost cuts nothing
+  // until the Lawn has seen it again.
+  if (connected && moved && now - sendAt > 40) {
+    send({ t: "mow", x: me.x, y: me.y });
+    moved = false; sendAt = now;
   }
   if (connected && now - posAt > 80) {
     send({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) });
