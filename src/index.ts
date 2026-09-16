@@ -108,6 +108,13 @@ const RESYNC_GAP_MS = 1000;
 const POS_RATE = 30;
 /** Emotes one Mower may send per second. */
 const EMOTE_RATE = 2;
+/**
+ * Mowers one address may have on the Lawn at once. Every socket earns its own
+ * travel, so one person with many sockets cuts what many visitors cut. This
+ * is the only thing that tells them apart, and it is a blunt one: a house, an
+ * office and a whole mobile network each look like one address.
+ */
+const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
@@ -194,13 +201,22 @@ export class Lawn extends DurableObject {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
+    // The address is a tag on the socket, not a note in memory: the Lawn can
+    // then count the Mowers of one address with an index, and the count stays
+    // right when the Lawn hibernates. Cloudflare writes this header itself, so
+    // a client cannot claim another address.
+    const address = request.headers.get("CF-Connecting-IP") ?? "";
+    if (address && this.mowersAt(address) >= MOWERS_PER_ADDRESS) {
+      return new Response("too many mowers from here", { status: 429 });
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
     // Hibernation: the Lawn sleeps between Mow Strokes and the sockets survive.
     // The id rides on the socket, so it survives hibernation too.
     const id = crypto.randomUUID().slice(0, 8);
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, address ? [address] : []);
     server.serializeAttachment({ id });
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
@@ -395,6 +411,13 @@ export class Lawn extends DurableObject {
     if (this.dirty) return;
     this.dirty = true;
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
+  }
+
+  /** How many Mowers one address has on the Lawn now. */
+  private mowersAt(address: string): number {
+    return this.ctx
+      .getWebSockets(address)
+      .filter((ws) => ws.readyState === WebSocket.READY_STATE_OPEN).length;
   }
 
   /**

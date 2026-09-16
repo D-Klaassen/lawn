@@ -86,14 +86,28 @@ Two holes stay open, because they are cheap and what they let through is not:
   it hibernated — is believed one time. Its first Mow Stroke only says where
   it starts and cuts nothing, so a reconnection buys a place to stand and no
   grass.
-- One person can be many Mowers. Every socket earns its own travel, so eight
-  sockets cut what eight visitors cut, and the Lawn cannot tell the difference
-  without counting by address. Counting by address would also throttle a house
-  or a school behind one address, so it is a decision and not an oversight.
-- A new socket also costs the Lawn a whole Snapshot, 110 kB. Opening sockets
-  is therefore cheaper for the sender than for the Lawn.
 - The score in a position report is still the tally of the client. The server
   relays it and does not count blades itself.
+
+## One address, twelve Mowers
+
+Every socket earns its own travel, so one person with many sockets cuts what
+many visitors cut. Nothing in what a client sends tells the two apart; only
+where it comes from does. The Lawn therefore counts: `MOWERS_PER_ADDRESS`
+sockets from one address at a time, and the next one gets a 429 instead of a
+Lawn. A new socket also costs the Lawn a whole Snapshot of 110 kB, so this
+holds down what it costs to open sockets as well as what they can cut.
+
+The address is a tag on the socket and not a note in memory. The count is then
+an index lookup, and it stays right while the Lawn hibernates — which is where
+the budgets in the WeakMaps are lost. Cloudflare writes `CF-Connecting-IP`
+itself, so a client cannot say it comes from somewhere else.
+
+This is a blunt instrument, and that is the reason to write it down: a house,
+an office and a whole mobile network each look like one address. It bounds
+what one address can do; it does not stop it. Twelve sockets driven flat out
+cut 147 Tiles a second, against 13 for one honest Mower. The cap is what
+decides that number, so lower it if the Lawn is still being shaved.
 
 ## The score is a sum, so it must never take a NaN
 
