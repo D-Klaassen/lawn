@@ -108,6 +108,7 @@ function bladeHeight(mownAt: number, regrow: number, now: number): number {
 /** Radius of one Mow Stroke, in Tiles. */
 const MOW_RADIUS = 2.6;
 
+
 /**
  * Fastest a Mower drives, in Tiles per second. It mirrors `MAX_V` in the
  * client, and it is what makes a Mow Stroke cost time: the Lawn moves a Mower
@@ -158,11 +159,23 @@ const BUMP_RATE = 1;
 const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
-/** How often a Mower's score is written to its socket, to outlive a hibernation. */
-const TALLY_SAVE_MS = 2000;
 const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
+const SCORE_KEY = "scores";
 const PERSIST_DELAY_MS = 2000;
+/**
+ * Mowers the Lawn keeps a tally for. Past this it forgets the lowest score of
+ * a Mower that is not driving, so the state of the Lawn stays bounded the way
+ * the Tiles are. The Lawn remembers the two hundred best Mowers, and one that
+ * was never among them starts again from nothing.
+ */
+const SCORE_KEEP = 200;
+/**
+ * Shortest gap between two tallies sent to the same Mower. The client counts
+ * the blades itself so the digits roll smoothly, and this is how often the
+ * Lawn overwrites that guess with what it really cut.
+ */
+const SCORE_GAP_MS = 250;
 
 /**
  * A Mow Stroke says where the Mower is now. The swath is from where the Lawn
@@ -215,10 +228,22 @@ export class Lawn extends DurableObject {
    * Mower the Lawn has lost says where it starts and cuts nothing.
    */
   private places = new WeakMap<WebSocket, Place>();
-  private travelBudgets = new WeakMap<WebSocket, Budget>();
-  /** Blades this Mower has taken off since it arrived, and when that was saved. */
-  private tallies = new WeakMap<WebSocket, number>();
-  private talliedAt = new WeakMap<WebSocket, number>();
+  /**
+   * How much travel each Mower has left, by Mower Key and not by socket.
+   * Windows are free and hands are not, so ten tabs on one Key drive one
+   * Mower's worth between them and a Score cannot be farmed by opening
+   * windows. Two honest tabs pay the same price: what they share is one pair
+   * of hands.
+   */
+  private travelBudgets = new Map<string, Budget>();
+  /**
+   * How many blades each Mower has cut, by Mower Key. The Lawn counts them as
+   * it cuts them, so the tally is not a number a client can name. Unlike a
+   * position it outlives the socket, because a Score is worth nothing that
+   * does not outlive the visit that earned it.
+   */
+  private scores!: Map<string, number>;
+  private scoredAt = new WeakMap<WebSocket, number>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -250,6 +275,8 @@ export class Lawn extends DurableObject {
         this.schedulePersist();
       }
       this.strokes = (await ctx.storage.get<number>(STROKE_KEY)) ?? 0;
+      const scores = await ctx.storage.get<[string, number][]>(SCORE_KEY);
+      this.scores = new Map(Array.isArray(scores) ? scores : []);
     });
   }
 
@@ -272,9 +299,16 @@ export class Lawn extends DurableObject {
     // Hibernation: the Lawn sleeps between Mow Strokes and the sockets survive.
     // The id rides on the socket, so it survives hibernation too.
     const id = crypto.randomUUID().slice(0, 8);
+    // The Mower Key says whose Score this is. The Lawn is the only thing that
+    // ever makes one, and it takes one back only when it already holds a
+    // Score under it, so a Mower cannot name itself into the Score of
+    // another. A Mower that has never cut a blade has no Score and simply
+    // gets a new Key, which costs it nothing.
+    const given = new URL(request.url).searchParams.get("m");
+    const key = given && this.scores.has(given) ? given : crypto.randomUUID();
     this.ctx.acceptWebSocket(server, address ? [address] : []);
-    server.serializeAttachment({ id });
-    server.send(JSON.stringify(this.hello(id)));
+    server.serializeAttachment({ id, key });
+    server.send(JSON.stringify(this.hello(id, key)));
     server.send(this.snapshot());
     this.announceMowers();
 
@@ -290,7 +324,13 @@ export class Lawn extends DurableObject {
     } catch {
       return;
     }
-    const id = (ws.deserializeAttachment() as { id?: string } | null)?.id ?? "?";
+    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    const id = who?.id ?? "?";
+    const key = who?.key ?? "";
+    // What the travel budget is held under. A socket opened before Keys
+    // existed has none, and drives on its own id rather than sharing an
+    // empty purse with every other such socket.
+    const purse = key || id;
 
     if (message?.t === "pos") {
       // Presence is ephemeral: relay it and keep nothing on disk. A Mower
@@ -303,10 +343,10 @@ export class Lawn extends DurableObject {
       // A Mower shows itself where it mows. The report is pulled back to
       // within reach of the last Mow Stroke, so a Mower that drives faster
       // than a Mower can drive is seen at the speed of a Mower.
-      const seen = this.within(ws, x, y);
-      // The score is the grass this Mower really took off, counted by the
-      // Lawn as it cut it. A client that says otherwise is not asked.
-      const s = Math.round(this.tally(ws));
+      const seen = this.within(ws, purse, x, y);
+      // The score is what the Lawn counted, not what the report says. A
+      // report carries no tally any more, so there is nothing to forge.
+      const s = Math.round(this.scores.get(key) ?? 0);
       // Stamp the report. A client draws other Mowers slightly in the past,
       // between two reports, and it needs to know when each one was really
       // made: the gaps between arrivals are network jitter, not movement.
@@ -314,6 +354,9 @@ export class Lawn extends DurableObject {
         JSON.stringify({ t: "peer", id, x: seen.x, y: seen.y, a, s, n: Date.now() }),
         ws,
       );
+      // A position goes out whether or not the Mower moves, so this is what
+      // brings an optimistic tally back to the truth after the last stroke.
+      this.tell(ws, s);
       return;
     }
     if (message?.t === "emote") {
@@ -352,19 +395,22 @@ export class Lawn extends DurableObject {
     if (!from) {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
-      this.seed(ws, x, y);
+      this.seed(ws, purse, x, y);
       return;
     }
 
     // Drive the Mower towards where it says it is, as far as its travel
     // allows. A client that says it moved further keeps a swath the Lawn
     // refused, so it gets the Lawn as the server sees it.
-    const to = this.drive(ws, from, x, y);
+    const to = this.drive(purse, from, x, y);
     this.places.set(ws, to);
     if (to.x !== x || to.y !== y) this.resync(ws);
     if (to.x === from.x && to.y === from.y) return;
 
-    this.bank(ws, this.mow(from.x, from.y, to.x, to.y));
+    // The Lawn counts the blades as it cuts them. This is the whole tally:
+    // no client adds anything to it and no client is asked what it is.
+    const blades = this.mow(from.x, from.y, to.x, to.y);
+    if (blades > 0 && key) this.scores.set(key, (this.scores.get(key) ?? 0) + blades);
     this.strokes += 1;
     this.broadcast(
       JSON.stringify({
@@ -382,29 +428,73 @@ export class Lawn extends DurableObject {
   }
 
   webSocketClose(ws: WebSocket): void {
-    const id = (ws.deserializeAttachment() as { id?: string } | null)?.id;
-    if (id) this.broadcast(JSON.stringify({ t: "gone", id }), ws);
+    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    if (who?.id) this.broadcast(JSON.stringify({ t: "gone", id: who.id }), ws);
+    this.forgetBudget(ws, who?.key || who?.id || "");
     this.announceMowers();
   }
 
-  webSocketError(): void {
+  webSocketError(ws: WebSocket): void {
+    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    this.forgetBudget(ws, who?.key || who?.id || "");
     this.announceMowers();
+  }
+
+  /**
+   * Drop a travel budget once the last Mower driving on that purse has gone.
+   * A budget held by a Key outlives the socket that spent from it, so unlike
+   * the other budgets it is not swept away with the socket. It holds no more
+   * than a second of driving, so forgetting it gives nothing away.
+   *
+   * `webSocketClose` fires before the socket leaves the list, so the one that
+   * is going does not count itself as still driving.
+   */
+  private forgetBudget(going: WebSocket, purse: string): void {
+    if (!purse) return;
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === going || ws.readyState !== WebSocket.READY_STATE_OPEN) continue;
+      const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+      if ((who?.key || who?.id || "") === purse) return;
+    }
+    this.travelBudgets.delete(purse);
   }
 
   async alarm(): Promise<void> {
     if (!this.dirty) return;
     this.dirty = false;
+    this.prune();
     // Each storage value stays below 128 KiB; save both chunks atomically.
     await this.ctx.storage.put({
       [STORAGE_KEY]: this.mownAt.buffer.slice(0, 128 * 1024),
       [`${STORAGE_KEY}:1`]: this.mownAt.buffer.slice(128 * 1024),
       [STROKE_KEY]: this.strokes,
+      [SCORE_KEY]: [...this.scores],
     });
   }
 
   /**
+   * Forget the lowest Scores once the Lawn holds more than it keeps. A Mower
+   * that is driving is never forgotten, whatever it has cut, so nobody loses a
+   * Score while they are earning it.
+   */
+  private prune(): void {
+    if (this.scores.size <= SCORE_KEEP) return;
+    const driving = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const key = (ws.deserializeAttachment() as { key?: string } | null)?.key;
+      if (key) driving.add(key);
+    }
+    const spare = [...this.scores]
+      .filter(([key]) => !driving.has(key))
+      .sort((a, b) => a[1] - b[1]);
+    for (const [key] of spare.slice(0, this.scores.size - SCORE_KEEP)) {
+      this.scores.delete(key);
+    }
+  }
+
+  /**
    * Cut every Tile the swath touches back to zero Blade Height, and answer
-   * with the grass that came off. That number is the score: the Lawn counts
+   * with the grass that came off. That number is the Score: the Lawn counts
    * the blades itself, so a Mower cannot name its own tally.
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
@@ -436,6 +526,22 @@ export class Lawn extends DurableObject {
     return blades;
   }
 
+  /**
+   * Tell a Mower what it has really cut. The client counts along so the digits
+   * roll without waiting for the Lawn, and this puts that guess right a few
+   * times a second — the same bargain the Snapshot makes for the Tiles.
+   */
+  private tell(ws: WebSocket, score: number): void {
+    const now = Date.now();
+    if (now - (this.scoredAt.get(ws) ?? 0) < SCORE_GAP_MS) return;
+    this.scoredAt.set(ws, now);
+    try {
+      ws.send(JSON.stringify({ t: "score", s: score }));
+    } catch {
+      /* socket is going away */
+    }
+  }
+
   private resync(ws: WebSocket): void {
     const now = Date.now();
     if (now - (this.resyncedAt.get(ws) ?? 0) < RESYNC_GAP_MS) return;
@@ -447,10 +553,14 @@ export class Lawn extends DurableObject {
     }
   }
 
-  private hello(id: string) {
+  private hello(id: string, key: string) {
     return {
       t: "hello",
       id,
+      /** The Mower Key, to give back on the next visit. */
+      key,
+      /** The tally the Lawn holds under that Key. */
+      s: Math.round(this.scores.get(key) ?? 0),
       w: LAWN_WIDTH,
       h: LAWN_HEIGHT,
       regrowMin: REGROW_MIN_SECONDS,
@@ -483,31 +593,6 @@ export class Lawn extends DurableObject {
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
   }
 
-  /**
-   * The blades this Mower has taken off since it arrived. The count lives in
-   * memory, which the Lawn loses when it hibernates, so it is also written to
-   * the socket now and then: a Mower that parks while the Lawn sleeps comes
-   * back to its own score and not to zero.
-   */
-  private tally(ws: WebSocket): number {
-    const held = this.tallies.get(ws);
-    if (held !== undefined) return held;
-    const attachment = ws.deserializeAttachment() as { cut?: number } | null;
-    const saved = typeof attachment?.cut === "number" ? attachment.cut : 0;
-    this.tallies.set(ws, saved);
-    return saved;
-  }
-
-  /** Add to that count, and put it on the socket if it has been a while. */
-  private bank(ws: WebSocket, blades: number): void {
-    const total = this.tally(ws) + blades;
-    this.tallies.set(ws, total);
-    const now = Date.now();
-    if (now - (this.talliedAt.get(ws) ?? 0) < TALLY_SAVE_MS) return;
-    this.talliedAt.set(ws, now);
-    const attachment = (ws.deserializeAttachment() as object | null) ?? {};
-    ws.serializeAttachment({ ...attachment, cut: total });
-  }
 
   /** How many Mowers one address has on the Lawn now. */
   private mowersAt(address: string): number {
@@ -522,9 +607,9 @@ export class Lawn extends DurableObject {
    * without this a Mower could reconnect for a full bank, cut a long swath at
    * once, drop the socket and come straight back for another.
    */
-  private seed(ws: WebSocket, x: number, y: number): void {
+  private seed(ws: WebSocket, purse: string, x: number, y: number): void {
     this.places.set(ws, { x, y });
-    this.travelBudgets.set(ws, { tokens: 0, refilledAt: Date.now() });
+    this.travelBudgets.set(purse, { tokens: 0, refilledAt: Date.now() });
   }
 
   /**
@@ -533,12 +618,12 @@ export class Lawn extends DurableObject {
    * swath: it is the claim itself when the Mower kept to the speed of a
    * Mower, and a point on the way there when it did not.
    */
-  private drive(ws: WebSocket, from: Place, x: number, y: number): Place {
+  private drive(purse: string, from: Place, x: number, y: number): Place {
     const dx = x - from.x;
     const dy = y - from.y;
     const distance = Math.hypot(dx, dy);
     if (distance === 0) return { x, y };
-    const budget = this.refill(this.travelBudgets, ws, TRAVEL_RATE, TRAVEL_BANK);
+    const budget = this.refill(this.travelBudgets, purse, TRAVEL_RATE, TRAVEL_BANK);
     if (distance <= budget.tokens) {
       budget.tokens -= distance;
       return { x, y };
@@ -554,16 +639,16 @@ export class Lawn extends DurableObject {
    * the position that follows it are the same movement, and paying twice for
    * it would hold back every honest Mower.
    */
-  private within(ws: WebSocket, x: number, y: number): Place {
+  private within(ws: WebSocket, purse: string, x: number, y: number): Place {
     const place = this.places.get(ws);
     if (!place) {
-      this.seed(ws, x, y);
+      this.seed(ws, purse, x, y);
       return { x, y };
     }
     const dx = x - place.x;
     const dy = y - place.y;
     const distance = Math.hypot(dx, dy);
-    const reach = this.refill(this.travelBudgets, ws, TRAVEL_RATE, TRAVEL_BANK).tokens
+    const reach = this.refill(this.travelBudgets, purse, TRAVEL_RATE, TRAVEL_BANK).tokens
       + POSITION_SLACK;
     if (distance <= reach) return { x, y };
     const k = reach / distance;
@@ -593,18 +678,23 @@ export class Lawn extends DurableObject {
     return true;
   }
 
-  /** Give a budget back the time that has gone by, and hand it over to spend. */
-  private refill(
-    budgets: WeakMap<WebSocket, Budget>,
-    ws: WebSocket,
+  /**
+   * Give a budget back the time that has gone by, and hand it over to spend.
+   * The purse is the socket for what a socket may send, because that is a cost
+   * to the line, and the Mower Key for what a Mower may cut, because that is a
+   * cost to the Lawn.
+   */
+  private refill<K>(
+    budgets: { get(purse: K): Budget | undefined; set(purse: K, budget: Budget): unknown },
+    purse: K,
     rate: number,
     capacity: number,
   ): Budget {
     const now = Date.now();
-    const budget = budgets.get(ws) ?? { tokens: capacity, refilledAt: now };
+    const budget = budgets.get(purse) ?? { tokens: capacity, refilledAt: now };
     budget.tokens = Math.min(capacity, budget.tokens + ((now - budget.refilledAt) / 1000) * rate);
     budget.refilledAt = now;
-    budgets.set(ws, budget);
+    budgets.set(purse, budget);
     return budget;
   }
 
