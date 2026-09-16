@@ -108,6 +108,11 @@ const RESYNC_GAP_MS = 1000;
 const POS_RATE = 30;
 /** Emotes one Mower may send per second. */
 const EMOTE_RATE = 2;
+/**
+ * Bumps one Mower may report per second. A client only reports a contact
+ * every 350 ms, so four is room to spare and still far below a flood.
+ */
+const BUMP_RATE = 4;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
@@ -125,7 +130,13 @@ type ClientMessage =
   /** Where a Mower is, which way it points, and how much it has cut. */
   | { t: "pos"; x: number; y: number; a: number; s: number }
   /** Which Emote a Mower shows. Relayed, never stored. */
-  | { t: "emote"; e: number };
+  | { t: "emote"; e: number }
+  /**
+   * That this Mower has been bumped and is dazed. A Mower speaks only for
+   * itself here, the same as with its position and its score: it cannot daze
+   * another Mower, it can only say that it is dazed.
+   */
+  | { t: "bump" };
 
 interface Budget {
   tokens: number;
@@ -146,6 +157,7 @@ export class Lawn extends DurableObject {
   private budgets = new WeakMap<WebSocket, Budget>();
   private posBudgets = new WeakMap<WebSocket, Budget>();
   private emoteBudgets = new WeakMap<WebSocket, Budget>();
+  private bumpBudgets = new WeakMap<WebSocket, Budget>();
   private resyncedAt = new WeakMap<WebSocket, number>();
   /**
    * Where the Lawn holds each Mower, and how much travel that Mower has left.
@@ -253,6 +265,13 @@ export class Lawn extends DurableObject {
       const e = Number(message.e);
       if (!Number.isInteger(e) || e < 0 || e >= EMOTE_COUNT) return;
       this.broadcast(JSON.stringify({ t: "emoted", id, e }), ws);
+      return;
+    }
+    if (message?.t === "bump") {
+      // A daze is presence too: it lasts one second, so it is gone long
+      // before a Lawn that hibernates wakes up. Relay it and store nothing.
+      if (!this.spendBump(ws)) return;
+      this.broadcast(JSON.stringify({ t: "bumped", id }), ws);
       return;
     }
     if (message?.t !== "mow") return;
@@ -450,6 +469,10 @@ export class Lawn extends DurableObject {
 
   private spendEmote(ws: WebSocket): boolean {
     return this.take(this.emoteBudgets, ws, EMOTE_RATE);
+  }
+
+  private spendBump(ws: WebSocket): boolean {
+    return this.take(this.bumpBudgets, ws, BUMP_RATE);
   }
 
   private take(budgets: WeakMap<WebSocket, Budget>, ws: WebSocket, rate: number): boolean {
