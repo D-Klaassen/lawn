@@ -22,14 +22,19 @@
     color: #fff; text-shadow: 0 2px 24px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.35);
   }
   #help {
-    position: fixed; top: calc(28px + clamp(30px, 5.2vw, 66px)); left: 50%;
+    /* The brand starts 18px down and its line box is 1.5 times its font size,
+       because it inherits the body line height. Clear all of that, then a gap. */
+    position: fixed; top: calc(18px + 1.5 * clamp(30px, 5.2vw, 66px) + 10px); left: 50%;
     transform: translateX(-50%); z-index: 10; pointer-events: none;
+    /* left:50% leaves only half the viewport to wrap in, so ask for the
+       text's own width and cap it against the screen instead. */
+    width: max-content; max-width: min(92vw, 820px); text-align: center;
     font-size: 13px; letter-spacing: .04em; color: #fff;
     text-shadow: 0 1px 10px rgba(0,0,0,.5);
     transition: opacity .8s ease;
   }
   #score {
-    position: fixed; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); left: 50%;
+    position: fixed; bottom: calc(38px + env(safe-area-inset-bottom, 0px)); left: 50%;
     transform: translateX(-50%); z-index: 10; pointer-events: none;
     color: #f1ffd7; font-size: clamp(24px, 3.1vw, 42px); line-height: 1;
     font-weight: 900; letter-spacing: .02em; text-align: center;
@@ -42,6 +47,15 @@
     font-size: 12px; line-height: 1.4; font-weight: 500;
     letter-spacing: .03em; white-space: nowrap; color: #dce9cf;
   }
+  #credit {
+    position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 50%;
+    transform: translateX(-50%); z-index: 10;
+    font-size: 11px; line-height: 1.4; letter-spacing: .05em; white-space: nowrap;
+    color: #dce9cf; opacity: .72; text-decoration: none;
+    text-shadow: 0 1px 6px rgba(0,0,0,.6);
+    transition: opacity .2s ease, color .2s ease;
+  }
+  #credit:hover, #credit:focus-visible { opacity: 1; color: #f1ffd7; text-decoration: underline; }
   #fallback {
     position: fixed; inset: 0; display: none; place-items: center; padding: 24px;
     background: #1a2416; color: #dce9cf; text-align: center; z-index: 20;
@@ -116,7 +130,10 @@
   }
   #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
   #board-list li span:last-child { color: #e8cd80; }
-  @media (max-width: 700px) { #score { bottom: calc(30.75vw + 28px); } }
+  @media (max-width: 700px) {
+    #score { bottom: calc(30.75vw + 46px); }
+    #credit { bottom: calc(30.75vw + 24px); }
+  }
   @media (prefers-reduced-motion: reduce) { #field-banner { transition: none; } #field-meter::-webkit-progress-value { transition: none; } }
 </style>
 </head>
@@ -148,6 +165,7 @@
   <span class="quest-label">On the Lawn</span>
   <ol id="board-list"></ol>
 </aside>
+<a id="credit" href="https://github.com/Onnokh" target="_blank" rel="noopener noreferrer">Made by Onkie</a>
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
