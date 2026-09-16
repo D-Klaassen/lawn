@@ -1,32 +1,6 @@
 import 'number-flow';
 import { continuous } from 'number-flow/plugins';
 
-const SCORE_KEY = 'lawn:score';
-function readScore() {
-  try {
-    const value = Number(localStorage.getItem(SCORE_KEY));
-    return Number.isFinite(value) && value >= 0 ? value : 0;
-  } catch { return 0; }
-}
-
-export const initialScore = readScore();
-let latest = initialScore;
-let saved = initialScore;
-let savedAt = -Infinity;
-
-function saveScore() {
-  if (latest === saved) return;
-  try {
-    localStorage.setItem(SCORE_KEY, String(latest));
-    saved = latest;
-  } catch { /* The score still works when browser storage is unavailable. */ }
-}
-
-addEventListener('pagehide', saveScore);
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) saveScore();
-});
-
 const score = document.querySelector('#score number-flow');
 score.format = { maximumFractionDigits: 0, useGrouping: true };
 score.trend = 1;
@@ -34,18 +8,34 @@ score.plugins = [continuous];
 score.transformTiming = { duration: 420, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' };
 score.spinTiming = { duration: 500, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' };
 score.opacityTiming = { duration: 180, easing: 'ease-out' };
-score.update(initialScore);
+score.update(0);
 
-let shown = Math.round(initialScore);
+let shown = 0;
 let updatedAt = -Infinity;
 
-export function updateScore(value, now) {
-  // A score that is not a number never reaches the screen or the storage. It
-  // would stay on the screen until the visitor reloads, and a saved "NaN"
-  // reads back as zero, which throws away the whole tally of that visitor.
+/**
+ * Put a whole tally on the screen without rolling to it. The Lawn holds the
+ * score and says it on arrival: that is a score the visitor already had, not
+ * grass they are cutting now, so the digits must not count up to it.
+ */
+export function landScore(value) {
   if (!Number.isFinite(value) || value < 0) return;
-  latest = value;
-  if (now - savedAt >= 500) { saveScore(); savedAt = now; }
+  const next = Math.round(value);
+  score.animated = false;
+  score.update(next);
+  requestAnimationFrame(() => { score.animated = true; });
+  shown = next;
+}
+
+/**
+ * Roll the digits towards a tally. Nothing is stored: a score kept in the
+ * browser is a score the visitor can write, and the Lawn counts the blades
+ * itself now.
+ */
+export function updateScore(value, now) {
+  // A score that is not a number never reaches the screen. It would stay
+  // there until the visitor reloads.
+  if (!Number.isFinite(value) || value < 0) return;
   const next = Math.round(value);
   // Batch rapid cuts so the digits get time to roll between updates.
   if (next === shown || now - updatedAt < 120) return;

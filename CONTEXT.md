@@ -19,6 +19,12 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   so the grass comes back in slow ground and quick ground. It is a pure
   function of the position of the Tile: no one stores it and no one sends it,
   and both sides build the same table.
+- **Mower Key** — what says whose Score a Score is. The Lawn makes one, keeps
+  the Score under it, and gives it to the Mower to bring back next visit. It
+  is not the Score and it is not the name a Mower is seen by.
+- **Score** — how many blades one Mower has cut. The Lawn counts them as it
+  cuts them. It is the sum of the Blade Height of each Tile of grass the
+  Mower took, so tall grass is worth more than stubble.
 - **Snapshot** — how far each Tile is through its Regrowth, from 0 to
   `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Regrowth, so
   the wire carries the fraction and not the age in seconds. The wire therefore
@@ -68,33 +74,95 @@ every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
 phone. A reported position is also pulled back to within reach of the last Mow
 Stroke, so each Mower is seen where it mows.
 
+The budget is held under the Mower Key, not under the socket. Windows are free
+and hands are not, so the thing that may only be spent once has to belong to
+the Mower and not to the connection.
+
 Before this the server only clamped a stroke to `MAX_STROKE` Tiles, measured
 back from the end the Mower gave. Forty of those in a second cut 240 Tiles a
 second. The clamp also threw away the swath of an honest Mower whose messages
 were held up, and told that Mower nothing.
 
-Two holes stay open, because they are cheap and what they let through is not:
+One hole stays open, because it is cheap and what it lets through is not: a
+Mower the Lawn has not seen — a new socket, or one the Lawn forgot while it
+hibernated — is believed one time. Its first Mow Stroke only says where it
+starts and cuts nothing, so the cost of a teleport is one reconnection for one
+stroke.
 
-- A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
-  it hibernated — is believed one time. Its first Mow Stroke only says where
-  it starts and cuts nothing, so the cost of a teleport is one reconnection
-  for one stroke.
-- The score in a position report is still the tally of the client. The server
-  relays it and does not count blades itself.
+## The Lawn counts the blades
+
+A Mower used to say how much it had cut and the Lawn relayed the number. Any
+number would do, so the board was a list of whatever each client typed. The
+Lawn now counts the blades itself, in the same loop that cuts them: it already
+walks every Tile of the swath, and it already knows the Blade Height of a Tile
+from `mownAt` and the Growth Rate. A position report carries no tally any
+more, so there is nothing left to forge.
+
+This costs a Mower nothing it did not already pay. The swath the Lawn counts
+is the swath the Lawn cut, which is the swath the travel budget allowed. A
+client sending a Mow Stroke every millisecond therefore scores *less* than a
+thumb on a phone, not more: it spends the same travel and wastes it on strokes
+that go nowhere.
+
+Only grass in a Field counts. The paths and the verges between the Fields are
+not grass and the client does not draw them as grass, so `fieldAt` is mirrored
+in `src/index.ts` from `public/fields.js`, the way the mow maths and the
+Growth Rate already are. All three must stay identical.
+
+The client still counts along, so the digits roll without waiting for a round
+trip, and the Lawn overwrites that guess four times a second with `{t:"score"}`.
+It is the bargain the Snapshot already makes for the Tiles: mow first, and be
+put right.
+
+## A Score needs a name to belong to
+
+A Score the Lawn counts is worth nothing if it dies with the socket, and a
+name the client chooses is a name a client can take. So the Lawn makes a Mower
+Key — one `crypto.randomUUID` — and the browser only carries it. The Lawn takes
+a Key back only when it already holds a Score under it, so a Mower cannot name
+itself into the Score of another, and a Mower that has never cut a blade has
+no Score, gets a fresh Key, and loses nothing by it.
+
+The Key is not the `id` a Mower is seen by. That stays one per socket, so two
+tabs of one browser are still two Mowers on the screen.
+
+One Score can only ever be fed by one travel budget, because both hang on the
+Key. Ten tabs on one Key cut what one Mower cuts: measured, one tab is let
+through at 12 Tiles a second and ten tabs at 18 between them, which is the
+refill rate plus the bank draining once. Eleven tabs would be the same.
+
+A tab that brings no Key gets a Key of its own, and so a budget of its own —
+but it gets a Score of its own with it, so nothing is concentrated. That is
+the whole shape of it: opening windows can only ever make more Mowers, never a
+faster one.
+
+Two honest tabs pay for this, and that was chosen with open eyes. They share
+one pair of hands: each drives at about three quarters of the speed of a lone
+Mower and sees the odd resync. A second tab is rare; a second tab used to farm
+is what this is for.
+
+Unlike a position, a Score is written down: it is saved with the Tiles, on the
+same debounced alarm. To keep the state of the Lawn bounded the way the Tiles
+are, the Lawn keeps `SCORE_KEEP` Scores and forgets the lowest — never one of a
+Mower that is driving, so nobody loses a Score while they are earning it.
 
 ## The score is a sum, so it must never take a NaN
 
 The score adds one Blade Height for each Tile the Mower cuts. A sum has no
 memory of its parts: one addend that is not a number makes every later score
-NaN, for as long as the page is open. It is worse than that, because the score
-is written to `localStorage` twice a second and a saved `"NaN"` reads back as
-zero. One bad frame therefore throws away the whole tally of a visitor.
+NaN, for as long as the sum stands. On the Lawn that sum now outlives the
+page, so one bad addend would follow a Mower between visits.
 
-Three gates stop this. `heightAt` answers 0 for a Tile it cannot date, instead
-of NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
+The same three gates stop this on both sides. `heightAt` on the client and
+`bladeHeight` on the Lawn answer 0 for a Tile they cannot date, instead of
+NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
 score that is not a finite number, so nothing that is not a number reaches the
-screen or the storage. The board reads the score of another Mower the same
-way, because `??` passes a NaN through and only catches a null.
+screen. The board reads the score of another Mower the same way, because `??`
+passes a NaN through and only catches a null.
+
+Nothing about the score is kept in the browser any more. A score in
+`localStorage` is a score the visitor can write, and the Lawn holds the real
+one.
 
 ## Agreement between client and server
 

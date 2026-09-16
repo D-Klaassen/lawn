@@ -301,7 +301,7 @@
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
-import { initialScore, updateScore } from '/score.js';
+import { landScore, updateScore } from '/score.js';
 import { fieldAt, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
 /* ------------------------------------------------------------------ *
@@ -374,7 +374,7 @@ let regrowMs = null;
 let mownAt = null;       // absolute ms per Tile
 let mowDir = null;       // heading of the cut per Tile
 let clockOffset = 0, connected = false, socket = null;
-let strokes = 0, bladesCut = initialScore, mowerCount = 1;
+let strokes = 0, bladesCut = 0, mowerCount = 1;
 let mowing = 0;
 const clippings = [];
 const settling = new Map();
@@ -413,6 +413,19 @@ const peers = new Map();
 /** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
 const me = { x: 144, y: 96, a: -Math.PI / 2, v: 0 };
 const POSITION_KEY = "lawn:mower-position";
+/**
+ * The Mower Key says whose tally this is. The Lawn makes it, holds the score
+ * under it and gives the score back; the browser only carries it between
+ * visits. It is not the score, so there is nothing here to rewrite.
+ */
+const KEY_KEY = "lawn:mower-key";
+function mowerKey() {
+  try { return localStorage.getItem(KEY_KEY) ?? ""; } catch { return ""; }
+}
+function rememberKey(key) {
+  if (typeof key !== "string" || !key) return;
+  try { localStorage.setItem(KEY_KEY, key); } catch { /* The Lawn just gives a new Key next visit. */ }
+}
 let positionReady = false, positionSavedAt = 0, savedPosition = "";
 
 function restorePosition() {
@@ -546,6 +559,8 @@ function connect() {
   reconnecting = false;
   const url = new URL("/lawn", location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const key = mowerKey();
+  if (key) url.searchParams.set("m", key);
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   socket = ws;
@@ -578,6 +593,12 @@ function connect() {
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes; mowerCount = m.mowers;
+      // The Lawn counted these blades, so they are the score. A reconnect in
+      // the middle of a drive says the same number the Lawn was already
+      // sending, so nothing jumps.
+      rememberKey(m.key);
+      bladesCut = Number.isFinite(m.s) && m.s >= 0 ? m.s : 0;
+      landScore(bladesCut);
       showMowerCount(mowerCount);
     } else if (m.t === "mow") {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
@@ -591,6 +612,11 @@ function connect() {
       const newest = p.buf[p.buf.length - 1];
       if (!newest || at > newest.t) p.buf.push({ t: at, x: m.x, y: m.y, a: m.a });
       peers.set(m.id, p);
+    } else if (m.t === "score") {
+      // The client counts along so the digits roll without waiting, and the
+      // Lawn says here what it really cut. The Lawn wins: a swath it refused
+      // was never grass this Mower took.
+      if (Number.isFinite(m.s) && m.s >= 0) bladesCut = m.s;
     } else if (m.t === "emoted") {
       const p = peers.get(m.id);
       if (p) { p.emote = m.e; p.emoteAt = performance.now(); }
@@ -914,7 +940,7 @@ function drive(dt) {
     moved = false; sendAt = now;
   }
   if (connected && now - posAt > 80) {
-    send({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) });
+    send({ t: "pos", x: me.x, y: me.y, a: me.a });
     posAt = now;
   }
   const renderTime = Date.now() + clockOffset - INTERP_DELAY;
