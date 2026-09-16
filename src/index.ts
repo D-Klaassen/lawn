@@ -69,7 +69,42 @@ function regrowTable(width: number, height: number): Float32Array {
   return table;
 }
 
+/**
+ * Which Field a point belongs to, or -1 for the paths and the verge. It is
+ * the same function as `fieldAt` in `public/fields.js` and must stay so: the
+ * two sides have to agree on which Tiles are grass, or a score counts blades
+ * that were never there. Mirrors the client exactly.
+ */
+function fieldAt(x: number, y: number, width: number, height: number): number {
+  if (x < 0 || y < 0 || x >= width || y >= height) return -1;
+  const across = height * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13);
+  const along = width * 0.52 + 9 * Math.sin(y * 0.065 + 0.7);
+  const branch = height * 0.22 + 5 * Math.sin(x * 0.07 + 1.8);
+  const verge = 2.1 + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  if (Math.min(Math.abs(y - across), Math.abs(x - along), Math.abs(y - branch)) <= verge) return -1;
+  const row = y < branch ? 0 : y < across ? 1 : 2;
+  return row * 2 + (x < along ? 0 : 1);
+}
+
+/** Grass grows on a Field. Nothing grows on a path or a verge. */
+function onGrass(x: number, y: number): boolean {
+  return fieldAt(x, y, LAWN_WIDTH, LAWN_HEIGHT) >= 0;
+}
+
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
+
+/**
+ * How tall the grass on a Tile stands, from 0 to 1. A Tile nobody ever mowed
+ * is fully overgrown. Mirrors `heightAt` in the client, which is what makes
+ * the score the server counts the same score the Mower watches.
+ */
+function bladeHeight(mownAt: number, regrow: number, now: number): number {
+  const age = mownAt === 0 ? regrow : now - mownAt;
+  if (age >= regrow) return 1;
+  if (!(age > 0) || !(regrow > 0)) return 0;
+  const t = age / regrow;
+  return 1 - (1 - t) * (1 - t);
+}
 /** Radius of one Mow Stroke, in Tiles. */
 const MOW_RADIUS = 2.6;
 
@@ -123,6 +158,8 @@ const BUMP_RATE = 1;
 const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
+/** How often a Mower's score is written to its socket, to outlive a hibernation. */
+const TALLY_SAVE_MS = 2000;
 const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
 const PERSIST_DELAY_MS = 2000;
@@ -135,8 +172,11 @@ const PERSIST_DELAY_MS = 2000;
  */
 type ClientMessage =
   | { t: "mow"; x: number; y: number; x1?: number; y1?: number }
-  /** Where a Mower is, which way it points, and how much it has cut. */
-  | { t: "pos"; x: number; y: number; a: number; s: number }
+  /**
+   * Where a Mower is and which way it points. It no longer says how much it
+   * has cut: the Lawn counts that itself.
+   */
+  | { t: "pos"; x: number; y: number; a: number }
   /** Which Emote a Mower shows. Relayed, never stored. */
   | { t: "emote"; e: number }
   /**
@@ -176,6 +216,9 @@ export class Lawn extends DurableObject {
    */
   private places = new WeakMap<WebSocket, Place>();
   private travelBudgets = new WeakMap<WebSocket, Budget>();
+  /** Blades this Mower has taken off since it arrived, and when that was saved. */
+  private tallies = new WeakMap<WebSocket, number>();
+  private talliedAt = new WeakMap<WebSocket, number>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -261,10 +304,9 @@ export class Lawn extends DurableObject {
       // within reach of the last Mow Stroke, so a Mower that drives faster
       // than a Mower can drive is seen at the speed of a Mower.
       const seen = this.within(ws, x, y);
-      // The score is the Mower's own tally. The Lawn carries it between
-      // screens but never keeps it, exactly like the position.
-      const raw = Number(message.s);
-      const s = Number.isFinite(raw) && raw > 0 ? Math.floor(Math.min(raw, 1e12)) : 0;
+      // The score is the grass this Mower really took off, counted by the
+      // Lawn as it cut it. A client that says otherwise is not asked.
+      const s = Math.round(this.tally(ws));
       // Stamp the report. A client draws other Mowers slightly in the past,
       // between two reports, and it needs to know when each one was really
       // made: the gaps between arrivals are network jitter, not movement.
@@ -322,7 +364,7 @@ export class Lawn extends DurableObject {
     if (to.x !== x || to.y !== y) this.resync(ws);
     if (to.x === from.x && to.y === from.y) return;
 
-    this.mow(from.x, from.y, to.x, to.y);
+    this.bank(ws, this.mow(from.x, from.y, to.x, to.y));
     this.strokes += 1;
     this.broadcast(
       JSON.stringify({
@@ -360,8 +402,12 @@ export class Lawn extends DurableObject {
     });
   }
 
-  /** Cut every Tile the swath touches back to zero Blade Height. */
-  private mow(x0: number, y0: number, x1: number, y1: number): void {
+  /**
+   * Cut every Tile the swath touches back to zero Blade Height, and answer
+   * with the grass that came off. That number is the score: the Lawn counts
+   * the blades itself, so a Mower cannot name its own tally.
+   */
+  private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
     const minX = Math.max(0, Math.floor(Math.min(x0, x1) - MOW_RADIUS));
     const maxX = Math.min(LAWN_WIDTH - 1, Math.ceil(Math.max(x0, x1) + MOW_RADIUS));
@@ -372,6 +418,7 @@ export class Lawn extends DurableObject {
     const dy = y1 - y0;
     const len2 = dx * dx + dy * dy;
 
+    let blades = 0;
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
         const px = x + 0.5 - x0;
@@ -380,10 +427,13 @@ export class Lawn extends DurableObject {
         const ox = px - t * dx;
         const oy = py - t * dy;
         if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
-          this.mownAt[y * LAWN_WIDTH + x] = now;
+          const i = y * LAWN_WIDTH + x;
+          if (onGrass(x + 0.5, y + 0.5)) blades += bladeHeight(this.mownAt[i], REGROW[i], now);
+          this.mownAt[i] = now;
         }
       }
     }
+    return blades;
   }
 
   private resync(ws: WebSocket): void {
@@ -431,6 +481,32 @@ export class Lawn extends DurableObject {
     if (this.dirty) return;
     this.dirty = true;
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
+  }
+
+  /**
+   * The blades this Mower has taken off since it arrived. The count lives in
+   * memory, which the Lawn loses when it hibernates, so it is also written to
+   * the socket now and then: a Mower that parks while the Lawn sleeps comes
+   * back to its own score and not to zero.
+   */
+  private tally(ws: WebSocket): number {
+    const held = this.tallies.get(ws);
+    if (held !== undefined) return held;
+    const attachment = ws.deserializeAttachment() as { cut?: number } | null;
+    const saved = typeof attachment?.cut === "number" ? attachment.cut : 0;
+    this.tallies.set(ws, saved);
+    return saved;
+  }
+
+  /** Add to that count, and put it on the socket if it has been a while. */
+  private bank(ws: WebSocket, blades: number): void {
+    const total = this.tally(ws) + blades;
+    this.tallies.set(ws, total);
+    const now = Date.now();
+    if (now - (this.talliedAt.get(ws) ?? 0) < TALLY_SAVE_MS) return;
+    this.talliedAt.set(ws, now);
+    const attachment = (ws.deserializeAttachment() as object | null) ?? {};
+    ws.serializeAttachment({ ...attachment, cut: total });
   }
 
   /** How many Mowers one address has on the Lawn now. */
