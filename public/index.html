@@ -341,15 +341,28 @@ function cut(x0, y0, x1, y1, heading, mine) {
 
 /* ---- the shared lawn ---- */
 
-let retry = 500;
+/**
+ * One socket at a time. The browser fires "error" and then "close" for the
+ * same drop, so a drop schedules one reconnect, not one per event. Events
+ * from a socket that is no longer the current one are ignored: without this,
+ * every drop doubled the sockets, one Mower counted as many, and drive()
+ * sent on a socket that was still connecting.
+ */
+let retry = 500, reconnecting = false;
 function connect() {
+  reconnecting = false;
   const url = new URL("/lawn", location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(url);
-  socket.binaryType = "arraybuffer";
+  const ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  socket = ws;
 
-  socket.addEventListener("open", () => { connected = true; retry = 500; });
-  socket.addEventListener("message", (e) => {
+  ws.addEventListener("open", () => {
+    if (ws !== socket) { ws.close(); return; }
+    connected = true; retry = 500;
+  });
+  ws.addEventListener("message", (e) => {
+    if (ws !== socket) return;
     if (e.data instanceof ArrayBuffer) {
       const ages = new Uint16Array(e.data);
       const now = Date.now() + clockOffset;
@@ -392,13 +405,18 @@ function connect() {
     }
   });
   const dropped = () => {
-    if (!connected && socket.readyState !== WebSocket.CLOSED) return;
+    if (ws !== socket || reconnecting) return;
     connected = false;
+    reconnecting = true;
     setTimeout(connect, retry);
     retry = Math.min(retry * 2, 15000);
   };
-  socket.addEventListener("close", dropped);
-  socket.addEventListener("error", dropped);
+  ws.addEventListener("close", dropped);
+  ws.addEventListener("error", dropped);
+}
+/** Send a message to the Lawn. A socket that is not open drops it. */
+function send(msg) {
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
 }
 function hueOf(id) {
   let h = 0;
@@ -438,7 +456,7 @@ let myEmote = -1, myEmoteAt = 0;
 function sendEmote(i) {
   myEmote = i;
   myEmoteAt = performance.now();
-  if (connected) socket.send(JSON.stringify({ t: "emote", e: i }));
+  if (connected) send({ t: "emote", e: i });
 }
 
 addEventListener("keydown", (e) => {
@@ -570,11 +588,11 @@ function drive(dt) {
   const now = performance.now();
   if (now - positionSavedAt > 500) { savePosition(); positionSavedAt = now; }
   if (connected && sentFrom && now - sendAt > 40) {
-    socket.send(JSON.stringify({ t: "mow", x0: sentFrom.x, y0: sentFrom.y, x1: me.x, y1: me.y }));
+    send({ t: "mow", x0: sentFrom.x, y0: sentFrom.y, x1: me.x, y1: me.y });
     sentFrom = null; sendAt = now;
   }
   if (connected && now - posAt > 80) {
-    socket.send(JSON.stringify({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) }));
+    send({ t: "pos", x: me.x, y: me.y, a: me.a, s: Math.round(bladesCut) });
     posAt = now;
   }
   const renderTime = Date.now() + clockOffset - INTERP_DELAY;
