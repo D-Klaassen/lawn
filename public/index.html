@@ -1,0 +1,1397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>keepmow.ing — one lawn, everybody's</title>
+<meta name="description" content="One shared lawn for everybody. Drive the mower, cut the grass. It grows back whether you are here or not." />
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #cbdcc2;
+    color: #fff;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #gpu, #hud { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #brand {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    margin: 0; z-index: 10; pointer-events: none;
+    font-size: clamp(30px, 5.2vw, 66px); font-weight: 800; letter-spacing: -.03em;
+    color: #fff; text-shadow: 0 2px 24px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.35);
+  }
+  #help {
+    position: fixed; top: calc(28px + clamp(30px, 5.2vw, 66px)); left: 50%;
+    transform: translateX(-50%); z-index: 10; pointer-events: none;
+    font-size: 13px; letter-spacing: .04em; color: #fff;
+    text-shadow: 0 1px 10px rgba(0,0,0,.5);
+    transition: opacity .8s ease;
+  }
+  #score {
+    position: fixed; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); left: 50%;
+    transform: translateX(-50%); z-index: 10; pointer-events: none;
+    color: #f1ffd7; font-size: clamp(24px, 3.1vw, 42px); line-height: 1;
+    font-weight: 900; letter-spacing: .02em; text-align: center;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 2px 16px rgba(0,0,0,.58), 0 1px 2px rgba(0,0,0,.45);
+  }
+  #score number-flow { --number-flow-mask-height: .08em; }
+  #mower-count {
+    display: block; margin-bottom: 8px; text-align: center;
+    font-size: 12px; line-height: 1.4; font-weight: 500;
+    letter-spacing: .03em; white-space: nowrap; color: #dce9cf;
+  }
+  #fallback {
+    position: fixed; inset: 0; display: none; place-items: center; padding: 24px;
+    background: #1a2416; color: #dce9cf; text-align: center; z-index: 20;
+  }
+  #fallback p { max-width: 40ch; }
+  #field-quest {
+    position: fixed; left: 16px; bottom: 16px; width: min(300px, 41vw);
+    aspect-ratio: 4 / 3; container-type: inline-size;
+    z-index: 10; pointer-events: none;
+    text-shadow: 0 1px 3px #14200e, 0 2px 12px #14200e;
+  }
+  .quest-label { font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #e8cd80; }
+  #left-quest-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #quest-card-content { position: absolute; inset: 26% 13% 20%; display: flex; flex-direction: column; justify-content: space-between; }
+  #quest-header-copy { display: flex; flex-direction: column; gap: 1.8cqw; }
+  #quest-header-copy .quest-label { font-size: 3cqw; line-height: 1; letter-spacing: .12em; }
+  #field-name { margin: 0; font-family: Georgia, serif; font-size: 7cqw; line-height: 1.15; font-weight: 700; color: #ffe4a0; text-wrap: balance; }
+  #quest-meter { position: relative; aspect-ratio: 3 / 1; }
+  #quest-meter img { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #field-progress {
+    position: absolute; left: 27%; right: 12.5%; top: 37%; bottom: 37%;
+    display: grid; place-items: center; z-index: 1;
+    color: #fff6df; font-size: 3.8cqw; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  #field-status { display: none; }
+  #field-meter {
+    position: absolute; left: 27%; top: 37%; width: 60.5%; height: 26%;
+    appearance: none; border: none; border-radius: 2px 999px 999px 2px;
+    overflow: hidden; background: transparent;
+  }
+  #field-meter::-webkit-progress-bar { background: transparent; }
+  #field-meter::-webkit-progress-value { background: linear-gradient(#bfd574cc, #719a39cc); box-shadow: inset 0 1px #e5efaeaa; transition: width .45s ease; }
+  #field-meter::-moz-progress-bar { background: linear-gradient(#bfd574cc, #719a39cc); }
+  #field-quest.complete #field-name { color: #d2f39a; }
+  #field-banner {
+    position: fixed; top: calc(18px + clamp(30px, 5.2vw, 66px)); left: 50%; transform: translate(-50%, 8px);
+    width: min(92vw, 700px); aspect-ratio: 3 / 1; container-type: inline-size;
+    text-align: center; pointer-events: none; z-index: 11;
+    opacity: 0; transition: opacity .6s ease, transform .6s ease;
+    text-shadow: 0 2px 16px #172311, 0 1px 3px #172311;
+  }
+  #field-banner-art { position: absolute; inset: 0; width: 100%; height: 100%; filter: drop-shadow(0 6px 10px #14200e66); }
+  #field-banner-copy {
+    position: absolute; left: 17%; right: 17%; top: 40%; bottom: 32%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: .6cqw;
+  }
+  #field-banner-label { font-size: 1.5cqw; line-height: 1.2; letter-spacing: .12em; white-space: nowrap; }
+  #field-banner.visible { opacity: 1; transform: translate(-50%, 0); }
+  #field-banner-name { margin: 0; font-family: Georgia, serif; font-weight: 700; line-height: 1.1; font-size: 4.5cqw; white-space: nowrap; color: #fff0be; }
+  body:has(#field-banner.visible) #help { visibility: hidden; }
+  @media (max-width: 700px) { #score { bottom: calc(30.75vw + 28px); } }
+  @media (prefers-reduced-motion: reduce) { #field-banner { transition: none; } #field-meter::-webkit-progress-value { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="gpu"></canvas>
+<canvas id="hud"></canvas>
+<h1 id="brand">keepmow.ing</h1>
+<div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
+<div id="help">W A S D or arrow keys to drive · the blades are always down</div>
+<aside id="field-quest" hidden aria-label="Current field quest">
+  <img id="left-quest-art" src="/assets/left-quest-card.png" alt="" />
+  <div id="quest-card-content">
+    <div id="quest-header-copy"><h2 id="field-name"></h2></div>
+  <div id="quest-details">
+    <div id="quest-meter">
+      <img src="/assets/quest-header.png" width="2172" height="724" alt="" />
+      <progress id="field-meter" max="100" value="0" aria-label="Field cut progress"></progress>
+      <div id="field-progress"></div>
+    </div>
+    <div id="field-status"></div>
+  </div>
+  </div>
+</aside>
+<div id="field-banner" role="status">
+  <img id="field-banner-art" src="/assets/field-entry-banner.png" width="2172" height="724" alt="" />
+  <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div></div>
+</div>
+<div id="fallback"><p id="fallback-text"></p></div>
+
+<script type="module">
+import { initialScore, updateScore } from '/score.js';
+import { fieldAt, createFieldQuests } from '/fields.js';
+const fieldQuests = createFieldQuests();
+/* ------------------------------------------------------------------ *
+ * The Lawn: one shared field, one Durable Object, many Mowers.
+ * Blade Height is a pure function of the time since a Tile was cut, so
+ * the grass keeps growing with nobody connected and nothing ticking.
+ * ------------------------------------------------------------------ */
+
+const gpuCanvas = document.getElementById("gpu");
+const hud = document.getElementById("hud");
+const g = hud.getContext("2d");
+const minimapFrame = new Image();
+minimapFrame.src = '/assets/minimap-frame.png';
+const minimapOpening = new Image();
+minimapOpening.src = '/assets/minimap-opening.png';
+const minimapCanvas = document.createElement('canvas');
+const help = document.getElementById("help");
+const mowerCountEl = document.getElementById("mower-count");
+
+function showMowerCount(count) {
+  mowerCountEl.textContent = `${count} ${count === 1 ? 'mower' : 'mowers'} active`;
+}
+
+const PATCH = 90;        // tiles of grass generated around the camera target
+const CELL3 = 0.28;      // blade spacing in tiles
+const SEGS = 4;          // segments along one blade
+const SAMPLES = 1;       // Broad WebGPU support and the lowest 4K fill cost.
+const MOWER_SCALE = 2.6; // the deck should about match the cut width
+const SHADOW_SIZE = 1536;
+const PEER_TIMEOUT = 4000;
+const COLLISION_RADIUS = MOWER_SCALE * 0.85;
+let myId = "";
+
+let W = 288, H = 192, REGROW_MS = 1800000, RADIUS = 2.6;
+let mownAt = null;       // absolute ms per Tile
+let mowDir = null;       // heading of the cut per Tile
+let clockOffset = 0, connected = false, socket = null;
+let strokes = 0, bladesCut = initialScore, mowerCount = 1;
+let mowing = 0;
+const clippings = [];
+const settling = new Map();
+
+function onGrass(x, y) {
+  return fieldAt(x, y, W, H) >= 0;
+}
+
+function throwClippings(x, y, heading, amount) {
+  mowing = Math.min(1, mowing + amount * 0.09);
+  const born = performance.now();
+  const count = Math.min(18, Math.ceil(amount * 4));
+  for (let i = 0; i < count; i++) {
+    const across = (Math.random() - 0.5) * 2.5;
+    const angle = heading + Math.PI + (Math.random() - 0.5) * 0.9;
+    const speed = 1.2 + Math.random() * 1.8;
+    clippings.push({ x: x - Math.cos(heading) * 2.5 - Math.sin(heading) * across,
+      y: y - Math.sin(heading) * 2.5 + Math.cos(heading) * across,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      up: 0.6 + Math.random() * 0.8, born, life: 320 + Math.random() * 220,
+      spin: (Math.random() - 0.5) * 15, tint: Math.floor(Math.random() * 3) });
+  }
+  if (clippings.length > 160) clippings.splice(0, clippings.length - 160);
+}
+
+/** Other Mowers: id -> { x, y, a, tx, ty, seen, hue }. */
+const peers = new Map();
+
+/** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
+const me = { x: 144, y: 96, a: -Math.PI / 2, v: 0 };
+const POSITION_KEY = "lawn:mower-position";
+let positionReady = false, positionSavedAt = 0, savedPosition = "";
+
+function restorePosition() {
+  if (positionReady) return;
+  positionReady = true;
+  try {
+    const p = JSON.parse(localStorage.getItem(POSITION_KEY));
+    if (!p || ![p.x, p.y, p.a].every(Number.isFinite)) return;
+    me.x = Math.max(COLLISION_RADIUS, Math.min(W - COLLISION_RADIUS, p.x));
+    me.y = Math.max(COLLISION_RADIUS, Math.min(H - COLLISION_RADIUS, p.y));
+    me.a = p.a;
+    me.v = 0;
+  } catch { /* Storage may be unavailable or contain an old invalid value. */ }
+}
+
+function savePosition() {
+  if (!positionReady) return;
+  const value = JSON.stringify({ x: me.x, y: me.y, a: me.a });
+  if (value === savedPosition) return;
+  try {
+    localStorage.setItem(POSITION_KEY, value);
+    savedPosition = value;
+  } catch { /* Driving still works when storage is unavailable. */ }
+}
+
+addEventListener("pagehide", savePosition);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) savePosition();
+});
+
+const MAX_V = 13, ACCEL = 62, DRAG = 5.5, TURN = 3.0;
+const keys = new Set();
+
+function heightAt(i, now) {
+  const age = now - mownAt[i];
+  if (age >= REGROW_MS) return 1;
+  if (age <= 0) return 0;
+  const t = age / REGROW_MS;
+  return 1 - (1 - t) * (1 - t);
+}
+
+/** Cut the swath between two points. Mirrors the server exactly. */
+function cut(x0, y0, x1, y1, heading, mine) {
+  if (!mownAt) return;
+  const now = Date.now() + clockOffset;
+  const minX = Math.max(0, Math.floor(Math.min(x0, x1) - RADIUS));
+  const maxX = Math.min(W - 1, Math.ceil(Math.max(x0, x1) + RADIUS));
+  const minY = Math.max(0, Math.floor(Math.min(y0, y1) - RADIUS));
+  const maxY = Math.min(H - 1, Math.ceil(Math.max(y0, y1) + RADIUS));
+  const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+  let harvested = 0;
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const px = x + 0.5 - x0, py = y + 0.5 - y0;
+      const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
+      const ox = px - t * dx, oy = py - t * dy;
+      if (ox * ox + oy * oy > RADIUS * RADIUS) continue;
+      const i = y * W + x;
+      if (mine && onGrass(x + 0.5, y + 0.5)) {
+        const height = heightAt(i, now);
+        bladesCut += height;
+        if (height > 0.1) harvested += height;
+      }
+      const standing = heightAt(i, now);
+      if (standing > 0.08 && !settling.has(i)) {
+        settling.set(i, { height: standing, born: performance.now(), duration: 170 + ((x * 17 + y * 31) % 60) });
+      }
+      mownAt[i] = now;
+      mowDir[i] = heading;
+    }
+  }
+  if (mine && harvested > 0.1 && len2 > 0.0001) throwClippings(x1, y1, heading, harvested);
+}
+
+/* ---- the shared lawn ---- */
+
+let retry = 500;
+function connect() {
+  const url = new URL("/lawn", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  socket = new WebSocket(url);
+  socket.binaryType = "arraybuffer";
+
+  socket.addEventListener("open", () => { connected = true; retry = 500; });
+  socket.addEventListener("message", (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      const ages = new Uint16Array(e.data);
+      const now = Date.now() + clockOffset;
+      settling.clear();
+      mownAt = new Float64Array(ages.length);
+      if (!mowDir || mowDir.length !== ages.length) mowDir = new Float32Array(ages.length);
+      for (let i = 0; i < ages.length; i++) mownAt[i] = now - ages[i] * 1000;
+      return;
+    }
+    const m = JSON.parse(e.data);
+    if (m.t === "hello") {
+      myId = m.id;
+      W = m.w; H = m.h; REGROW_MS = m.regrow * 1000; RADIUS = m.radius;
+      fieldQuests.resize(W, H);
+      restorePosition();
+      clockOffset = m.now - Date.now();
+      strokes = m.strokes; mowerCount = m.mowers;
+      showMowerCount(mowerCount);
+    } else if (m.t === "mow") {
+      cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
+      strokes = m.strokes;
+    } else if (m.t === "peer") {
+      const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id) };
+      p.tx = m.x; p.ty = m.y; p.a = m.a; p.seen = performance.now();
+      peers.set(m.id, p);
+    } else if (m.t === "gone") {
+      peers.delete(m.id);
+    } else if (m.t === "mowers") {
+      mowerCount = m.mowers;
+      showMowerCount(mowerCount);
+    }
+  });
+  const dropped = () => {
+    if (!connected && socket.readyState !== WebSocket.CLOSED) return;
+    connected = false;
+    setTimeout(connect, retry);
+    retry = Math.min(retry * 2, 15000);
+  };
+  socket.addEventListener("close", dropped);
+  socket.addEventListener("error", dropped);
+}
+function hueOf(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return h;
+}
+connect();
+
+/* ---- driving ---- */
+
+addEventListener("keydown", (e) => {
+  keys.add(e.key.toLowerCase());
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(e.key.toLowerCase())) e.preventDefault();
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear());
+const held = (...k) => k.some((x) => keys.has(x));
+
+let sendAt = 0, sentFrom = null, posAt = 0;
+const bumps = [];
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const lastContact = new Map();
+
+function bump(id, x, y, now) {
+  const previous = lastContact.get(id) ?? -Infinity;
+  lastContact.set(id, now);
+  if (now - previous < 350 || Math.abs(me.v) < 0.8) return;
+  bumps.push({ x, y, born: now });
+  if (bumps.length > 12) bumps.shift();
+}
+
+function moveMower(dx, dy, now) {
+  const radius = COLLISION_RADIUS;
+  const gap = radius * 2;
+  // Small steps keep a fast mower from crossing another between frames.
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (radius * 0.5)));
+  for (let step = 0; step < steps; step++) {
+    me.x += dx / steps;
+    me.y += dy / steps;
+    for (let pass = 0; pass < 4; pass++) {
+      for (const [id, p] of peers) {
+        if (now - p.seen > PEER_TIMEOUT) continue;
+        const ox = me.x - p.x, oy = me.y - p.y;
+        const distance = Math.hypot(ox, oy);
+        if (distance >= gap) continue;
+        // Opposite fallback directions also separate simultaneous spawns.
+        const nx = distance > 0.001 ? ox / distance : (myId < id ? -1 : 1);
+        const ny = distance > 0.001 ? oy / distance : 0;
+        bump(id, p.x + nx * radius, p.y + ny * radius, now);
+        me.x += nx * (gap - distance);
+        me.y += ny * (gap - distance);
+      }
+      me.x = Math.max(radius, Math.min(W - radius, me.x));
+      me.y = Math.max(radius, Math.min(H - radius, me.y));
+    }
+  }
+}
+
+function drive(dt) {
+  mowing *= Math.exp(-dt * 7);
+  const fwd = (held("w", "arrowup") ? 1 : 0) - (held("s", "arrowdown") ? 1 : 0);
+  const turn = (held("d", "arrowright") ? 1 : 0) - (held("a", "arrowleft") ? 1 : 0);
+
+  me.v += fwd * ACCEL * dt;
+  me.v -= me.v * DRAG * dt;
+  me.v = Math.max(-MAX_V * 0.5, Math.min(MAX_V, me.v));
+  // A mower only steers while the wheels turn, same as the real thing.
+  me.a += turn * TURN * dt * Math.min(1, 0.25 + Math.abs(me.v) / 4) * Math.sign(me.v || 1);
+
+  const px = me.x, py = me.y;
+  moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, performance.now());
+
+  // Never bank a segment while the socket is down: it would be sent as one
+  // straight cut across everything driven in the meantime.
+  if (!connected) sentFrom = null;
+
+  if (px !== me.x || py !== me.y) {
+    cut(px, py, me.x, me.y, me.a, true);
+    if (sentFrom === null) sentFrom = { x: px, y: py };
+  }
+
+  const now = performance.now();
+  if (now - positionSavedAt > 500) { savePosition(); positionSavedAt = now; }
+  if (connected && sentFrom && now - sendAt > 40) {
+    socket.send(JSON.stringify({ t: "mow", x0: sentFrom.x, y0: sentFrom.y, x1: me.x, y1: me.y }));
+    sentFrom = null; sendAt = now;
+  }
+  if (connected && now - posAt > 80) {
+    socket.send(JSON.stringify({ t: "pos", x: me.x, y: me.y, a: me.a }));
+    posAt = now;
+  }
+  for (const [id, p] of peers) {
+    if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
+    p.x += (p.tx - p.x) * Math.min(1, dt * 12);
+    p.y += (p.ty - p.y) * Math.min(1, dt * 12);
+  }
+}
+
+function allMowers() {
+  return [...peers.values()].map((p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false }))
+    .concat([{ x: me.x, y: me.y, a: me.a, hue: 80, me: true }]);
+}
+
+/* ------------------------------------------------------------------ *
+ * the field: instanced 3D blades, one sun, one depth buffer
+ * ------------------------------------------------------------------ */
+
+const FIELD_WGSL = `struct Cam {
+  viewProj : mat4x4f,
+  lightVP  : mat4x4f,
+  eye      : vec4f,
+  sun      : vec4f,   // direction towards the sun
+  misc     : vec4f,   // time, patch origin in cells (x, y), blades per row
+  misc2    : vec4f,   // grid w, grid h, cell size, blade height
+  opts     : vec4f,   // mower count, mower scale, ambient, daylight 0..1
+  sunCol   : vec4f,
+  skyCol   : vec4f,
+  mowers   : array<vec4f, 8>,     // x, z, heading, cutting vibration
+  mowerCol : array<vec4f, 8>,     // paint
+};
+struct Field { d : array<vec4f, 13824> };   // 55296 Tiles, packed 4 per vec4
+
+@group(0) @binding(0) var<uniform> C : Cam;
+@group(0) @binding(1) var<storage, read> Hs : Field;   // Blade Height 0..1
+@group(0) @binding(2) var<storage, read> Ds : Field;   // heading of the cut
+@group(0) @binding(3) var shadowMap : texture_depth_2d;
+@group(0) @binding(4) var shadowSamp : sampler_comparison;
+
+fn comp(v : vec4f, c : u32) -> f32 {
+  return select(select(select(v.x, v.y, c == 1u), v.z, c == 2u), v.w, c == 3u);
+}
+fn tileIdx(p : vec2f) -> u32 {
+  let x = clamp(p.x, 0.0, C.misc2.x - 1.0);
+  let y = clamp(p.y, 0.0, C.misc2.y - 1.0);
+  return u32(y) * u32(C.misc2.x) + u32(x);
+}
+fn hAt(p : vec2f) -> f32 { let i = tileIdx(p); return comp(Hs.d[i / 4u], i % 4u); }
+fn dAt(p : vec2f) -> f32 { let i = tileIdx(p); return comp(Ds.d[i / 4u], i % 4u); }
+
+/** Bilinear, so a mown edge is a curve and not a staircase of Tiles. */
+fn hSmooth(p : vec2f) -> f32 {
+  let q = p - vec2f(0.5);
+  let f = floor(q);
+  let t = q - f;
+  return mix(mix(hAt(f), hAt(f + vec2f(1.0, 0.0)), t.x),
+             mix(hAt(f + vec2f(0.0, 1.0)), hAt(f + vec2f(1.0, 1.0)), t.x), t.y);
+}
+
+// Blend vectors instead of angles so headings wrap smoothly at ±pi.
+fn cutVector(p : vec2f) -> vec2f {
+  let a = dAt(p);
+  return vec2f(cos(a), sin(a));
+}
+fn cutSmooth(p : vec2f) -> vec2f {
+  let q = p - vec2f(0.5);
+  let f = floor(q);
+  let t = smoothstep(vec2f(0.0), vec2f(1.0), fract(q));
+  return mix(mix(cutVector(f), cutVector(f + vec2f(1.0, 0.0)), t.x),
+             mix(cutVector(f + vec2f(0.0, 1.0)), cutVector(f + vec2f(1.0, 1.0)), t.x), t.y);
+}
+
+fn hash4(c : vec2f) -> vec4f {
+  var p = fract(vec3f(c.xyx) * vec3f(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yzx + 33.33);
+  let a = fract((p.xxy + p.yzz) * p.zyx);
+  var q = fract(vec3f(c.yxy) * vec3f(0.1231, 0.0973, 0.1099));
+  q += dot(q, q.zyx + 21.17);
+  return vec4f(a, fract((q.xzy + q.yxz) * q.yzx).x);
+}
+/** Interpolated value noise: no cell edges, no sine ripple. */
+fn vnoise(p : vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash4(i).x, hash4(i + vec2f(1.0, 0.0)).x, u.x),
+             mix(hash4(i + vec2f(0.0, 1.0)).x, hash4(i + vec2f(1.0, 1.0)).x, u.x), u.y);
+}
+
+// Shared by the soil and blades so the verge follows the same curves.
+fn pathGrass(p : vec2f) -> f32 {
+  let across = C.misc2.y * 0.5 + 7.0 * sin(p.x * 0.055) + 3.0 * sin(p.x * 0.13);
+  let along = C.misc2.x * 0.52 + 9.0 * sin(p.y * 0.065 + 0.7);
+  let branch = C.misc2.y * 0.22 + 5.0 * sin(p.x * 0.07 + 1.8);
+  let dist = min(min(abs(p.y - across), abs(p.x - along)), abs(p.y - branch));
+  let width = 1.65 + 0.35 * sin(p.x * 0.19 + p.y * 0.11);
+  let fringe = (vnoise(p * 1.2) - 0.5) * 0.7;
+  return smoothstep(width, width + 1.8, dist + fringe);
+}
+
+fn cloverDensity(root : vec2f) -> f32 {
+  let clusterCell = floor(root / 21.0);
+  let cluster = hash4(clusterCell + 219.7);
+  let centre = clusterCell * 21.0 + vec2f(6.0) + cluster.xy * 9.0;
+  let distance = length((root - centre) / vec2f(1.0, 0.7 + cluster.x * 0.5));
+  return (1.0 - smoothstep(1.1, 2.4, distance + (vnoise(root) - 0.5) * 0.7))
+              * step(0.60, cluster.z);
+}
+
+fn lawnEdge(p : vec2f) -> f32 {
+  let edge = min(min(p.x, C.misc2.x - p.x), min(p.y, C.misc2.y - p.y));
+  return smoothstep(-5.0, 4.0, edge + (vnoise(p * 0.18) - 0.5) * 4.0);
+}
+
+/** How much sun reaches a point, from the sun's own depth map. */
+fn sunlight(w : vec3f) -> f32 {
+  let lp = C.lightVP * vec4f(w, 1.0);
+  let ndc = lp.xyz / lp.w;
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  // No early exits: textureSampleCompare may only be called from uniform
+  // control flow, so sample first and mask the result afterwards.
+  let inside = ndc.z <= 1.0 && ndc.z >= 0.0 &&
+               uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+  let texel = 1.0 / 1536.0;
+  let depth = clamp(ndc.z - 0.0016, 0.0, 1.0);
+  var sum = 0.0;
+  for (var y = -1; y <= 1; y = y + 1) {
+    for (var x = -1; x <= 1; x = x + 1) {
+      let at = clamp(uv + vec2f(f32(x), f32(y)) * texel, vec2f(0.0), vec2f(1.0));
+      sum = sum + textureSampleCompare(shadowMap, shadowSamp, at, depth);
+    }
+  }
+  let rim = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  return mix(1.0, select(1.0, sum / 9.0, inside), smoothstep(0.0, 0.12, rim));
+}
+
+/* ---------------- the grass ---------------- */
+
+struct Blade {
+  world : vec3f,
+  nrm   : vec3f,
+  t     : f32,
+  tint  : f32,
+  cut   : f32,
+};
+
+fn bladeAt(vi : u32, ii : u32) -> Blade {
+  let perRow = u32(C.misc.w);
+  let cellSize = C.misc2.z;
+  // misc.yz is the patch origin as a whole number of cells, so every blade
+  // keeps the same world cell as the patch slides under the camera.
+  let cellIdx = C.misc.yz + vec2f(f32(ii % perRow), f32(ii / perRow));
+  let jitter = hash4(cellIdx);
+  let root = (cellIdx + jitter.xy) * cellSize;
+
+  let r = hash4(root * 91.7);
+  // Sample the height a step away from the root, so blades straddle the edge
+  // of a cut instead of lining up along it. The step is mostly a coherent
+  // field, which makes clumps push into the path rather than lone spikes.
+  let wobble = vec2f(vnoise(root * 1.25) - 0.5, vnoise(root * 1.25 + 7.3) - 0.5) * 1.5
+             + (r.xy - vec2f(0.5)) * 0.45;
+  let h = hSmooth(root + wobble);
+
+  let verge = pathGrass(root);
+  let density = lawnEdge(root) * verge;
+  let patchCentre = (C.misc.yz + vec2f(C.misc.w * 0.5)) * cellSize;
+  let patchEdge = C.misc.w * cellSize * 0.5 - max(abs(root.x - patchCentre.x), abs(root.y - patchCentre.y));
+  let onLawn = smoothstep(r.x * 0.55, r.x * 0.55 + 0.45, density)
+             * smoothstep(0.0, 6.0, patchEdge);
+  let bladeH = C.misc2.w * (0.55 + 0.75 * r.w) * (0.10 + 0.90 * h) * onLawn * mix(0.25, 1.0, verge)
+               * mix(1.0, 0.75, cloverDensity(root));
+  let time = C.misc.x;
+
+  // Which way it points, and how far it leans over.
+  let face = r.z * 6.2831853;
+  let direction = mix(vec2f(cos(face), sin(face)), cutSmooth(root), (1.0 - h) * 0.85);
+  let fwd = direction / max(length(direction), 0.001);
+  let gust = sin(time * 1.3 + root.x * 0.7 + root.y * 0.5) * 0.5 + 0.5;
+  let leanAmt = (0.25 + 0.35 * r.x + 0.25 * gust) + (1.0 - h) * 0.65;
+
+  let seg = vi / 2u;
+  let side = f32(vi % 2u) * 2.0 - 1.0;
+  let t = f32(seg) / 4.0;
+
+  // The blade arcs: it rises fast, then bends over towards its tip.
+  let rise = bladeH * (t - leanAmt * t * t * 0.55);
+  let away = bladeH * leanAmt * t * t;
+  let halfW = C.misc2.w * 0.055 * (1.0 - pow(t, 0.7)) * (0.75 + 0.5 * r.y) * onLawn;
+
+  let sideDir = vec3f(-fwd.y, 0.0, fwd.x);
+  let centre = vec3f(root.x + fwd.x * away, rise, root.y + fwd.y * away);
+
+  let tangent = normalize(vec3f(fwd.x * leanAmt * 0.9, 1.0 - leanAmt * 0.5, fwd.y * leanAmt * 0.9));
+  var n = normalize(cross(sideDir, tangent));
+  n = normalize(n + sideDir * side * 0.35);   // round the blade a little
+
+  var b : Blade;
+  b.world = centre + sideDir * (side * halfW);
+  b.nrm = n;
+  b.t = t;
+  b.tint = r.w;
+  b.cut = 1.0 - smoothstep(0.0, 0.45, h);
+  return b;
+}
+
+struct VSOut {
+  @builtin(position) pos : vec4f,
+  @location(0) nrm  : vec3f,
+  @location(1) t    : f32,
+  @location(2) tint : f32,
+  @location(3) wpos : vec3f,
+  @location(4) cut  : f32,
+};
+
+@vertex
+fn vs_blade(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VSOut {
+  let b = bladeAt(vi, ii);
+  var o : VSOut;
+  o.pos = C.viewProj * vec4f(b.world, 1.0);
+  o.nrm = b.nrm; o.t = b.t; o.tint = b.tint; o.wpos = b.world; o.cut = b.cut;
+  return o;
+}
+
+@vertex
+fn vs_blade_shadow(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> @builtin(position) vec4f {
+  return C.lightVP * vec4f(bladeAt(vi, ii).world, 1.0);
+}
+
+/** Sunlight, sky fill and soft shadows. */
+fn shade(base : vec3f, n : vec3f, wpos : vec3f, aoIn : f32) -> vec3f {
+  let sun = normalize(C.sun.xyz);
+  let lam = max(dot(n, sun), 0.0);
+  let vis = sunlight(wpos);
+  let sky = C.skyCol.rgb * (C.opts.z * (0.65 + 0.35 * n.y));
+  return base * (sky + C.sunCol.rgb * lam * mix(0.3, 1.0, vis)) * aoIn;
+}
+
+@fragment
+fn fs_blade(i : VSOut) -> @location(0) vec4f {
+  var n = normalize(i.nrm);
+  let view = normalize(C.eye.xyz - i.wpos);
+  if (dot(n, view) < 0.0) { n = -n; }
+
+  var base = mix(vec3f(0.24, 0.48, 0.12), vec3f(0.43, 0.66, 0.22), i.tint);
+  base = mix(base, vec3f(0.64, 0.88, 0.34), smoothstep(0.5, 1.0, i.t) * 0.5);
+  base = mix(base, vec3f(0.70, 0.85, 0.38), i.cut * 0.5);    // a cut blade is pale
+
+  let ao = mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t));
+  return vec4f(shade(base, n, i.wpos, ao), 1.0);
+}
+
+/* ---------------- the ground ---------------- */
+
+fn groundColour(w : vec2f) -> vec3f {
+  // Break both edges with noise, so neither the cut nor the border is a line.
+  let grain = (vnoise(w * 5.0) - 0.5) * 0.7 + (vnoise(w * 1.4) - 0.5) * 1.3;
+  let h = hSmooth(w) * 0.5
+        + (hSmooth(w + vec2f(0.65, 0.0)) + hSmooth(w - vec2f(0.65, 0.0))
+        + hSmooth(w + vec2f(0.0, 0.65)) + hSmooth(w - vec2f(0.0, 0.65))) * 0.125
+        + grain * 0.08;
+  let soil = vec3f(0.20, 0.40, 0.13);
+  // A real lawn stripes because the deck lays the grass over. Same here.
+  let stripe = 0.5 + 0.5 * cutSmooth(w).x;
+  let cutG = mix(vec3f(0.38, 0.59, 0.20), vec3f(0.46, 0.66, 0.26), stripe);
+  var col = mix(soil, cutG, 1.0 - smoothstep(0.0, 0.85, h));
+  let dirt = mix(vec3f(0.22, 0.12, 0.065), vec3f(0.34, 0.22, 0.12),
+                 vnoise(w * 0.65) * 0.7 + vnoise(w * 8.0) * 0.3);
+  let verge = pathGrass(w);
+  let worn = mix(dirt, vec3f(0.31, 0.34, 0.14), 0.6);
+  col = mix(mix(dirt, worn, smoothstep(0.0, 0.5, verge)),
+            col, smoothstep(0.35, 1.0, verge));
+  return mix(vec3f(0.38, 0.48, 0.24), col, lawnEdge(w));
+}
+
+struct GOut { @builtin(position) pos : vec4f, @location(0) w : vec2f };
+
+fn groundVertex(vi : u32) -> vec2f {
+  var q = array<vec2f, 6>(vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
+                          vec2f(1.0, 0.0), vec2f(1.0, 1.0), vec2f(0.0, 1.0));
+  let lo = vec2f(-200.0, -200.0);
+  let hi = vec2f(C.misc2.x + 200.0, C.misc2.y + 200.0);
+  return lo + q[vi] * (hi - lo);
+}
+
+@vertex
+fn vs_ground(@builtin(vertex_index) vi : u32) -> GOut {
+  let w = groundVertex(vi);
+  var o : GOut;
+  // a hair below the blades, so the two do not fight for the same depth
+  o.pos = C.viewProj * vec4f(w.x, -0.015, w.y, 1.0);
+  o.w = w;
+  return o;
+}
+
+@fragment
+fn fs_ground(i : GOut) -> @location(0) vec4f {
+  let w3 = vec3f(i.w.x, -0.015, i.w.y);
+  return vec4f(shade(groundColour(i.w), vec3f(0.0, 1.0, 0.0), w3, 1.0), 1.0);
+}
+
+/* ---------------- wildflowers ---------------- */
+
+struct FlowerOut {
+  @builtin(position) pos : vec4f,
+  @location(0) world : vec3f,
+  @location(1) colour : vec3f,
+};
+
+@vertex
+fn vs_flower(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> FlowerOut {
+  let count = u32(ceil(C.misc.w / 4.0));
+  let cell = floor(C.misc.yz / 4.0) + vec2f(f32(ii % count), f32(ii / count));
+  let r = hash4(cell + 43.8);
+  let root = (cell + r.xy) * C.misc2.z * 4.0;
+  let clusterCell = floor(root / 24.0);
+  let cluster = hash4(clusterCell + 127.3);
+  let centre = clusterCell * 24.0 + vec2f(8.0) + cluster.xy * 8.0;
+  let offset = (root - centre) / vec2f(1.0, 0.75 + cluster.w * 0.45);
+  let radius = 3.0 + cluster.z * 1.6;
+  let fringe = (vnoise(root * 0.8) - 0.5) * 0.8;
+  let density = (1.0 - smoothstep(radius - 0.8, radius + 0.5, length(offset) + fringe))
+              * step(0.35, cluster.w);
+  let bloom = step(r.z, density * 0.9) * pathGrass(root) * lawnEdge(root)
+            * smoothstep(0.4, 0.85, hSmooth(root));
+  let patchCentre = (C.misc.yz + vec2f(C.misc.w * 0.5)) * C.misc2.z;
+  let edge = C.misc.w * C.misc2.z * 0.5 - max(abs(root.x - patchCentre.x), abs(root.y - patchCentre.y));
+  let size = bloom * smoothstep(0.0, 5.0, edge);
+  let height = (0.65 + r.w * 0.35) * size;
+  let sway = sin(C.misc.x * 1.8 + root.x * 0.5 + root.y) * 0.08 * size;
+  let head = vec3f(root.x + sway, height, root.y);
+  var world = head;
+  var colour = vec3f(0.25, 0.43, 0.10);
+  if (vi < 12u) {
+    let quad = array<vec2f, 6>(vec2f(-1, 0), vec2f(1, 0), vec2f(1, 1),
+                              vec2f(-1, 0), vec2f(1, 1), vec2f(-1, 1));
+    let q = quad[vi % 6u];
+    let side = select(vec3f(1, 0, 0), vec3f(0, 0, 1), vi >= 6u);
+    world = vec3f(root.x + sway * q.y, height * q.y, root.y) + side * q.x * 0.022 * size;
+  } else if (vi < 48u) {
+    let petal = (vi - 12u) / 6u;
+    let corners = array<vec2f, 6>(vec2f(0.03, 0), vec2f(0.18, -0.09), vec2f(0.31, 0),
+                                 vec2f(0.03, 0), vec2f(0.31, 0), vec2f(0.18, 0.09));
+    let q = corners[(vi - 12u) % 6u];
+    let a = f32(petal) * 1.0471976 + r.x * 6.2831853;
+    world = head + vec3f(q.x * cos(a) - q.y * sin(a), q.x * 0.18,
+                         q.x * sin(a) + q.y * cos(a)) * size;
+    let variety = cluster.x;
+    colour = select(vec3f(0.98, 0.92, 0.73), vec3f(0.72, 0.43, 0.82), variety > 0.48);
+    colour = select(colour, vec3f(0.98, 0.57, 0.48), variety > 0.68);
+  } else {
+    let k = (vi - 48u) % 3u;
+    let a = f32((vi - 48u) / 3u + select(0u, 1u, k == 2u)) * 1.0471976;
+    let radius = select(0.085, 0.0, k == 0u) * size;
+    world = head + vec3f(cos(a) * radius, 0.025 * size, sin(a) * radius);
+    colour = vec3f(1.0, 0.68, 0.15);
+  }
+  var o : FlowerOut;
+  o.world = world;
+  o.colour = colour;
+  o.pos = C.viewProj * vec4f(world, 1);
+  return o;
+}
+
+@vertex
+fn vs_clover(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> FlowerOut {
+  let count = u32(ceil(C.misc.w / 3.0));
+  let cell = floor(C.misc.yz / 3.0) + vec2f(f32(ii % count), f32(ii / count));
+  let r = hash4(cell + 317.2);
+  let root = (cell + r.xy) * C.misc2.z * 3.0;
+  let density = cloverDensity(root);
+  let patchCentre = (C.misc.yz + vec2f(C.misc.w * 0.5)) * C.misc2.z;
+  let edge = C.misc.w * C.misc2.z * 0.5 - max(abs(root.x - patchCentre.x), abs(root.y - patchCentre.y));
+  let size = step(r.z, density * 0.65) * pathGrass(root) * lawnEdge(root)
+           * smoothstep(0.2, 0.65, hSmooth(root)) * smoothstep(0.0, 5.0, edge);
+  let leaf = vi / 24u;
+  let corner = vi % 3u;
+  let segment = (vi % 24u) / 3u;
+  let outline = array<vec2f, 8>(vec2f(0.04, 0), vec2f(0.17, -0.13),
+    vec2f(0.34, -0.15), vec2f(0.43, -0.07), vec2f(0.37, 0),
+    vec2f(0.43, 0.07), vec2f(0.34, 0.15), vec2f(0.17, 0.13));
+  var q = vec2f(0.23, 0);
+  if (corner != 0u) { q = outline[(segment + corner - 1u) % 8u]; }
+  let angle = f32(leaf) * 2.0943951 + r.x * 6.2831853;
+  let scale = size * (0.45 + r.w * 0.25);
+  let sway = sin(C.misc.x * 1.2 + root.x + root.y) * 0.025 * size;
+  let world = vec3f(root.x + (q.x * cos(angle) - q.y * sin(angle)) * scale + sway,
+    (0.44 + r.y * 0.12 + q.x * 0.1) * size,
+    root.y + (q.x * sin(angle) + q.y * cos(angle)) * scale);
+  var o : FlowerOut;
+  o.world = world;
+  o.colour = mix(vec3f(0.23, 0.43, 0.14), vec3f(0.32, 0.53, 0.18), r.w);
+  o.colour += vec3f(0.06, 0.09, 0.025) * (1.0 - smoothstep(0.01, 0.06, abs(q.y)));
+  o.pos = C.viewProj * vec4f(world, 1);
+  return o;
+}
+
+@fragment
+fn fs_flower(i : FlowerOut) -> @location(0) vec4f {
+  return vec4f(shade(i.colour, vec3f(0, 1, 0), i.world, 1.0), 1);
+}
+
+/* ---------------- the mower ---------------- */
+
+struct Part { world : vec3f, nrm : vec3f, panel : f32 };
+struct MVertex {
+  @location(0) local : vec3f,
+  @location(1) normal : vec3f,
+  @location(2) material : f32,
+};
+
+fn mowerAt(v : MVertex, ii : u32) -> Part {
+  let m = C.mowers[ii];
+  let ca = cos(m.z);
+  let sa = sin(m.z);
+  let local = v.local;
+  let nrm = v.normal;
+  let panel = v.material;
+  var sc = local * C.opts.y;
+  sc.y += m.w * (0.018 + sin(C.misc.x * 32.0) * 0.018);
+  sc.y += sc.x * sin(C.misc.x * 21.0) * m.w * 0.006;
+  var p : Part;
+  p.world = vec3f(m.x + sc.x * ca - sc.z * sa, sc.y, m.y + sc.x * sa + sc.z * ca);
+  p.nrm = vec3f(nrm.x * ca - nrm.z * sa, nrm.y, nrm.x * sa + nrm.z * ca);
+  p.panel = panel;
+  return p;
+}
+
+struct MOut {
+  @builtin(position) pos : vec4f,
+  @location(0) nrm   : vec3f,
+  @location(1) tint  : vec3f,
+  @location(2) panel : f32,
+  @location(3) wpos  : vec3f,
+};
+
+@vertex
+fn vs_mower(v : MVertex, @builtin(instance_index) ii : u32) -> MOut {
+  let p = mowerAt(v, ii);
+  var o : MOut;
+  o.pos = C.viewProj * vec4f(p.world, 1.0);
+  o.nrm = p.nrm;
+  o.tint = C.mowerCol[ii].rgb;
+  o.panel = p.panel;
+  o.wpos = p.world;
+  return o;
+}
+
+@vertex
+fn vs_mower_shadow(v : MVertex, @builtin(instance_index) ii : u32) -> @builtin(position) vec4f {
+  return C.lightVP * vec4f(mowerAt(v, ii).world, 1.0);
+}
+
+@fragment
+fn fs_mower(i : MOut) -> @location(0) vec4f {
+  var base = i.tint;
+  if (i.panel > 0.5) { base = vec3f(0.055, 0.065, 0.055); }
+  if (i.panel > 1.5) { base = vec3f(0.31, 0.35, 0.32); }
+  if (i.panel > 2.5) { base = vec3f(0.88, 0.87, 0.71); }
+  return vec4f(shade(base, normalize(i.nrm), i.wpos, 1.0), 1.0);
+}
+`;
+
+/* ---- small matrix helpers ---- */
+
+function mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let v = 0;
+    for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+    o[c * 4 + r] = v;
+  }
+  return o;
+}
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2);
+  const o = new Float32Array(16);
+  o[0] = f / aspect; o[5] = f; o[10] = far / (near - far);
+  o[11] = -1; o[14] = (far * near) / (near - far);
+  return o;
+}
+function ortho(half, near, far) {
+  const o = new Float32Array(16);
+  o[0] = 1 / half; o[5] = 1 / half; o[10] = 1 / (near - far);
+  o[14] = near / (near - far); o[15] = 1;
+  return o;
+}
+function lookAt(eye, target, up) {
+  const z = norm(sub(eye, target)), x = norm(cross(up, z)), y = cross(z, x);
+  const o = new Float32Array(16);
+  o[0] = x[0]; o[1] = y[0]; o[2] = z[0];
+  o[4] = x[1]; o[5] = y[1]; o[6] = z[1];
+  o[8] = x[2]; o[9] = y[2]; o[10] = z[2];
+  o[12] = -dot3(x, eye); o[13] = -dot3(y, eye); o[14] = -dot3(z, eye); o[15] = 1;
+  return o;
+}
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = (a) => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+function hslToRgb(hDeg, sat, light) {
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const hp = (hDeg % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const t = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x]
+          : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+  const m = light - c / 2;
+  return [t[0] + m, t[1] + m, t[2] + m];
+}
+
+const DAYLIGHT = {
+  dir: norm([0.4, 1, 0.45]),
+  daylight: 1,
+  light: [1.00, 0.97, 0.86],
+  skyCol: [0.80, 0.88, 0.76],
+  ambient: 0.47,
+};
+
+function mowerMesh() {
+  const vertices = [];
+  function triangle(a, b, c, material) {
+    const n = norm(cross(sub(b, a), sub(c, a)));
+    for (const p of [a, b, c]) vertices.push(...p, ...n, material);
+  }
+  function skin(rings, material) {
+    const count = rings[0].length;
+    for (let j = 0; j < rings.length - 1; j++) {
+      for (let i = 0; i < count; i++) {
+        const k = (i + 1) % count;
+        triangle(rings[j][i], rings[j + 1][i], rings[j + 1][k], material);
+        triangle(rings[j][i], rings[j + 1][k], rings[j][k], material);
+      }
+    }
+    for (const [ring, reverse] of [[rings[0], true], [rings.at(-1), false]]) {
+      const centre = ring.reduce((a, p) => a.map((v, i) => v + p[i] / count), [0, 0, 0]);
+      for (let i = 0; i < count; i++) {
+        const k = (i + 1) % count;
+        triangle(centre, ring[reverse ? i : k], ring[reverse ? k : i], material);
+      }
+    }
+  }
+  function body(cx, width, depth, levels, material) {
+    const radius = Math.min(width, depth) * 0.28;
+    skin(levels.map(([y, scale]) => Array.from({length: 24}, (_, i) => {
+      const a = i / 24 * Math.PI * 2;
+      const x = Math.cos(a), z = Math.sin(a);
+      return [cx + scale * ((width / 2 - radius) * Math.sign(x) + radius * x),
+              y, scale * ((depth / 2 - radius) * Math.sign(z) + radius * z)];
+    })), material);
+  }
+  function tube(a, b, radius, material, segments = 12) {
+    const axis = norm(sub(b, a));
+    const u = norm(cross(axis, Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
+    const v = cross(axis, u);
+    skin([[a, radius * 0.8], [a.map((x, i) => x + axis[i] * radius * 0.2), radius],
+          [b.map((x, i) => x - axis[i] * radius * 0.2), radius], [b, radius * 0.8]]
+      .map(([centre, r]) => Array.from({length: segments}, (_, i) => {
+        const angle = i / segments * Math.PI * 2;
+        return centre.map((x, k) => x + r * (u[k] * Math.cos(angle) + v[k] * Math.sin(angle)));
+      })), material);
+  }
+  body(0.05, 1.7, 1.35, [[0.19, 0.9], [0.24, 1], [0.36, 1], [0.47, 0.86]], 0);
+  body(0.05, 1.74, 1.39, [[0.18, 0.93], [0.24, 1]], 1);
+  body(-0.12, 0.8, 0.77, [[0.46, 1], [0.68, 0.94], [0.78, 0.72]], 1);
+  tube([-0.12, 0.78, 0], [-0.12, 0.81, 0], 0.22, 3, 16);
+  for (const x of [-0.57, 0.61]) for (const side of [-1, 1]) {
+    const radius = x < 0 ? 0.29 : 0.23;
+    tube([x, radius, side * 0.60], [x, radius, side * 0.83], radius, 1, 16);
+    tube([x, radius, side * 0.83], [x, radius, side * 0.85], radius * 0.5, 3, 12);
+  }
+  for (const side of [-1, 1]) {
+    tube([-0.65, 0.38, side * 0.48], [-1.13, 1.12, side * 0.48], 0.035, 2);
+    tube([-1.13, 1.12, side * 0.48], [-1.72, 1.58, side * 0.43], 0.035, 2);
+  }
+  tube([-1.72, 1.58, -0.43], [-1.72, 1.58, 0.43], 0.065, 1);
+  return new Float32Array(vertices);
+}
+
+/* ---- GPU setup ---- */
+
+async function initField() {
+  if (!navigator.gpu) throw new Error("This browser has no WebGPU. Try Chrome, Edge or Safari 18.");
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("No GPU adapter available.");
+  const device = await adapter.requestDevice();
+  device.addEventListener("uncapturederror", (e) => console.error("WebGPU:", e.error.message));
+
+  const ctx = gpuCanvas.getContext("webgpu");
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: "opaque" });
+
+  const module = device.createShaderModule({ code: FIELD_WGSL });
+  for (const m of (await module.getCompilationInfo()).messages) {
+    if (m.type === "error") throw new Error(`WGSL line ${m.lineNum}: ${m.message}`);
+  }
+
+  // Explicit layouts. With "auto", every pipeline gets a layout holding only
+  // the bindings that shader happens to read, and one wrong entry in a bind
+  // group makes it invalid — with draws then dropped in silence.
+  const V = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+  const uni = (binding) => ({ binding, visibility: V, buffer: { type: "uniform" } });
+  const fieldBinding = (binding) => ({ binding, visibility: V, buffer: { type: "read-only-storage" } });
+  const mainLayout = device.createBindGroupLayout({
+    entries: [uni(0), fieldBinding(1), fieldBinding(2),
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+      { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } }],
+  });
+  const castLayout = device.createBindGroupLayout({ entries: [uni(0), fieldBinding(1), fieldBinding(2)] });
+
+  const depthFormat = "depth24plus";
+  const shadowFormat = "depth32float";
+
+  device.pushErrorScope("validation");
+  const mowerLayout = [{ arrayStride: 28, attributes: [
+    { shaderLocation: 0, offset: 0, format: "float32x3" },
+    { shaderLocation: 1, offset: 12, format: "float32x3" },
+    { shaderLocation: 2, offset: 24, format: "float32" },
+  ] }];
+  const mk = (vs, fs, topology) => device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [mainLayout] }),
+    vertex: { module, entryPoint: vs, buffers: vs.startsWith("vs_mower") ? mowerLayout : [] },
+    fragment: { module, entryPoint: fs, targets: [{ format }] },
+    primitive: { topology, cullMode: "none" },
+    depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: "less" },
+    multisample: { count: SAMPLES },
+  });
+  const caster = (vs, topology) => device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [castLayout] }),
+    vertex: { module, entryPoint: vs, buffers: vs.startsWith("vs_mower") ? mowerLayout : [] },
+    primitive: { topology, cullMode: "none" },
+    depthStencil: {
+      format: shadowFormat, depthWriteEnabled: true, depthCompare: "less",
+      depthBias: 3, depthBiasSlopeScale: 3.5,
+    },
+  });
+
+  const blades = mk("vs_blade", "fs_blade", "triangle-strip");
+  const clover = mk("vs_clover", "fs_flower", "triangle-list");
+  const flowers = mk("vs_flower", "fs_flower", "triangle-list");
+  const ground = mk("vs_ground", "fs_ground", "triangle-list");
+  const mowers = mk("vs_mower", "fs_mower", "triangle-list");
+  const bladesCast = caster("vs_blade_shadow", "triangle-strip");
+  const mowersCast = caster("vs_mower_shadow", "triangle-list");
+
+  const mesh = mowerMesh();
+  const mowerBuffer = device.createBuffer({ size: mesh.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(mowerBuffer, 0, mesh);
+  const mowerVertices = mesh.length / 7;
+  const uniform = (size) => device.createBuffer({ size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const cam = uniform(496);
+  const fieldBuffer = () => device.createBuffer({ size: 13824 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  const hBuf = fieldBuffer();
+  const dBuf = fieldBuffer();
+
+  const shadow = device.createTexture({
+    size: [SHADOW_SIZE, SHADOW_SIZE], format: shadowFormat,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  const shadowSampler = device.createSampler({
+    compare: "less", magFilter: "linear", minFilter: "linear",
+  });
+
+  const buffers = [
+    { binding: 0, resource: { buffer: cam } },
+    { binding: 1, resource: { buffer: hBuf } },
+    { binding: 2, resource: { buffer: dBuf } },
+  ];
+  const bindMain = device.createBindGroup({
+    layout: mainLayout,
+    entries: [...buffers,
+      { binding: 3, resource: shadow.createView() },
+      { binding: 4, resource: shadowSampler }],
+  });
+  const bindCast = device.createBindGroup({ layout: castLayout, entries: buffers });
+
+  const setupError = await device.popErrorScope();
+  if (setupError) throw new Error(setupError.message);
+
+  return {
+    device, ctx, format, depthFormat, cam, hBuf, dBuf, mowerBuffer, mowerVertices,
+    blades, ground, flowers, clover, mowers, bladesCast, mowersCast,
+    bindMain, bindCast, shadowView: shadow.createView(),
+    camData: new Float32Array(124),
+    heightData: new Float32Array(13824 * 4),
+    dirData: new Float32Array(13824 * 4),
+    depth: null, colour: null, size: [0, 0],
+  };
+}
+
+let F = null;
+initField().then((f) => (F = f)).catch((e) => {
+  document.getElementById("fallback").style.display = "grid";
+  document.getElementById("fallback-text").textContent = `The lawn needs WebGPU. ${e.message}`;
+});
+
+function render(now, ts) {
+  // 4K panels otherwise turn the multisampled canvas into an enormous
+  // offscreen buffer. One device pixel per CSS pixel is still crisp at this
+  // camera distance and leaves room for the WebGPU scene to animate.
+  const dpr = Math.min(devicePixelRatio || 1, innerWidth * innerHeight > 7000000 ? 1 : 1.35);
+  const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
+  if (gpuCanvas.width !== cw || gpuCanvas.height !== ch) { gpuCanvas.width = cw; gpuCanvas.height = ch; }
+  if (F.size[0] !== cw || F.size[1] !== ch) {
+    if (F.depth) F.depth.destroy();
+    if (F.colour) F.colour.destroy();
+    F.depth = F.device.createTexture({
+      size: [cw, ch], format: F.depthFormat, sampleCount: SAMPLES,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    F.colour = SAMPLES === 1 ? null : F.device.createTexture({
+      size: [cw, ch], format: F.format, sampleCount: SAMPLES,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    F.size = [cw, ch];
+  }
+
+  for (let i = 0; i < mownAt.length; i++) {
+    F.heightData[i] = heightAt(i, now);
+    F.dirData[i] = mowDir[i];
+  }
+  for (const [i, cut] of settling) {
+    const t = Math.min(1, Math.max(0, (ts - cut.born) / cut.duration));
+    if (t >= 1) { settling.delete(i); continue; }
+    const target = F.heightData[i];
+    F.heightData[i] = target + (cut.height - target) * (1 - t) ** 3;
+  }
+  F.device.queue.writeBuffer(F.hBuf, 0, F.heightData);
+  F.device.queue.writeBuffer(F.dBuf, 0, F.dirData);
+
+  // Fixed heading. A camera that turns with the mower makes a big lawn
+  // unreadable; this one only follows its position, and stays over the Lawn.
+  const back = 32, high = 32;
+  const tx = Math.max(11, Math.min(W - 11, me.x));
+  const tz = Math.max(6, Math.min(H - 14, me.y));
+  const impact = bumps.at(-1);
+  const impactAge = impact ? (ts - impact.born) / 190 : 1;
+  const kick = !reducedMotion.matches && impactAge >= 0 && impactAge < 1
+    ? Math.sin(impactAge * Math.PI * 2) * (1 - impactAge) ** 2 * 0.18 : 0;
+  const eye = [tx + Math.cos(me.a) * kick, high + kick * 0.4,
+               tz + back + Math.sin(me.a) * kick];
+  const vp = mul(perspective(0.62, cw / ch, 1.0, 160), lookAt(eye, [tx, 0.0, tz], [0, 1, 0]));
+
+  const air = DAYLIGHT;
+  const lightDir = air.dir;
+  const lightEye = [tx + lightDir[0] * 70, lightDir[1] * 70, tz + lightDir[2] * 70];
+  const lightVP = mul(ortho(30, 1, 150), lookAt(lightEye, [tx, 0, tz], [0, 1, 0]));
+
+  const sceneScale = cw * ch > 7000000 ? 1.28 : 1;
+  const cellSize = CELL3 * sceneScale;
+  const perRow = Math.round(PATCH / cellSize);
+  const ox = Math.round((tx - PATCH / 2) / CELL3), oy = Math.round((tz - PATCH / 2) / CELL3);
+  const C = F.camData;
+  C.set(vp, 0);
+  C.set(lightVP, 16);
+  C[32] = eye[0]; C[33] = eye[1]; C[34] = eye[2];
+  C[36] = air.dir[0]; C[37] = air.dir[1]; C[38] = air.dir[2];
+  C[40] = ts / 1000; C[41] = ox; C[42] = oy; C[43] = perRow;
+  C[44] = W; C[45] = H; C[46] = cellSize; C[47] = 0.80;
+  const ms = allMowers().slice(0, 8);
+  C[48] = ms.length; C[49] = MOWER_SCALE; C[50] = air.ambient; C[51] = air.daylight;
+  C[52] = air.light[0]; C[53] = air.light[1]; C[54] = air.light[2];
+  C[56] = air.skyCol[0]; C[57] = air.skyCol[1]; C[58] = air.skyCol[2];
+  ms.forEach((m, k) => {
+    C[60 + k * 4] = m.x; C[61 + k * 4] = m.y; C[62 + k * 4] = m.a; C[63 + k * 4] = m.me && !reducedMotion.matches ? mowing : 0;
+    const [r, gg, b] = hslToRgb(m.hue, m.me ? 0.72 : 0.58, m.me ? 0.56 : 0.5);
+    C[92 + k * 4] = r; C[93 + k * 4] = gg; C[94 + k * 4] = b;
+  });
+  F.device.queue.writeBuffer(F.cam, 0, C);
+
+  const enc = F.device.createCommandEncoder();
+
+  // 1. what the sun can see
+  const castPass = enc.beginRenderPass({
+    colorAttachments: [],
+    depthStencilAttachment: {
+      view: F.shadowView, depthClearValue: 1.0,
+      depthLoadOp: "clear", depthStoreOp: "store",
+    },
+  });
+  castPass.setBindGroup(0, F.bindCast);
+  castPass.setPipeline(F.bladesCast);
+  castPass.draw((SEGS + 1) * 2, perRow * perRow);
+  if (ms.length > 0) {
+    castPass.setPipeline(F.mowersCast);
+    castPass.setVertexBuffer(0, F.mowerBuffer);
+    castPass.draw(F.mowerVertices, ms.length);
+  }
+  castPass.end();
+
+  // 2. what you can see
+  const color = SAMPLES === 1
+    ? { view: F.ctx.getCurrentTexture().createView(), clearValue: { r: air.skyCol[0], g: air.skyCol[1], b: air.skyCol[2], a: 1 }, loadOp: "clear", storeOp: "store" }
+    : { view: F.colour.createView(), resolveTarget: F.ctx.getCurrentTexture().createView(), clearValue: { r: air.skyCol[0], g: air.skyCol[1], b: air.skyCol[2], a: 1 }, loadOp: "clear", storeOp: "discard" };
+  const pass = enc.beginRenderPass({
+    colorAttachments: [color],
+    depthStencilAttachment: {
+      view: F.depth.createView(), depthClearValue: 1.0,
+      depthLoadOp: "clear", depthStoreOp: "store",
+    },
+  });
+  pass.setBindGroup(0, F.bindMain);
+  pass.setPipeline(F.ground); pass.draw(6);
+  pass.setPipeline(F.blades); pass.draw((SEGS + 1) * 2, perRow * perRow);
+  pass.setPipeline(F.clover); pass.draw(72, Math.ceil(perRow / 3) ** 2);
+  pass.setPipeline(F.flowers); pass.draw(66, Math.ceil(perRow / 4) ** 2);
+  if (ms.length > 0) {
+    pass.setPipeline(F.mowers);
+    pass.setVertexBuffer(0, F.mowerBuffer);
+    pass.draw(F.mowerVertices, ms.length);
+  }
+  pass.end();
+  F.device.queue.submit([enc.finish()]);
+}
+
+function drawMowing(cw, ch, dpr) {
+  const now = performance.now();
+  const m = F.camData;
+  const project = (x, height, y) => {
+    const w = m[3] * x + m[7] * height + m[11] * y + m[15];
+    if (w <= 0) return null;
+    return [((m[0] * x + m[4] * height + m[8] * y + m[12]) / w * 0.5 + 0.5) * cw,
+      (0.5 - (m[1] * x + m[5] * height + m[9] * y + m[13]) / w * 0.5) * ch];
+  };
+  g.save();
+  if (mowing > 0.02) {
+    const p = project(me.x + Math.cos(me.a) * 1.8, 0.22, me.y + Math.sin(me.a) * 1.8);
+    if (p) {
+      const glow = g.createRadialGradient(...p, 0, ...p, 24 * dpr);
+      glow.addColorStop(0, `rgba(229,255,151,${mowing * 0.2})`);
+      glow.addColorStop(1, "rgba(229,255,151,0)");
+      g.fillStyle = glow;
+      g.beginPath(); g.ellipse(...p, 24 * dpr, 12 * dpr, 0, 0, Math.PI * 2); g.fill();
+    }
+  }
+  for (let i = clippings.length - 1; i >= 0; i--) {
+    const c = clippings[i];
+    const age = now - c.born;
+    if (age >= c.life) { clippings.splice(i, 1); continue; }
+    const t = age / 1000, progress = age / c.life;
+    const p = project(c.x + c.vx * t, Math.max(0.05, 0.12 + c.up * t - 5 * t * t), c.y + c.vy * t);
+    if (!p) continue;
+    g.save();
+    g.translate(...p); g.rotate(c.spin * t);
+    g.globalAlpha = Math.min(1, (1 - progress) * 3) * (reducedMotion.matches ? 0.45 : 0.9);
+    g.fillStyle = ["#a8cc58", "#d3e88b", "#71993e"][c.tint];
+    g.beginPath();
+    g.moveTo(-3 * dpr, 0); g.quadraticCurveTo(0, -3 * dpr, 5 * dpr, -dpr);
+    g.lineTo(dpr, 2 * dpr); g.closePath(); g.fill();
+    g.restore();
+  }
+  g.restore();
+}
+
+function drawBumps(cw, ch, dpr) {
+  const now = performance.now();
+  while (bumps.length && now - bumps[0].born > 480) bumps.shift();
+  const m = F.camData;
+  g.save();
+  for (const bump of bumps) {
+    const t = (now - bump.born) / 480;
+    const height = 0.8 + t * 0.9;
+    const w = m[3] * bump.x + m[7] * height + m[11] * bump.y + m[15];
+    if (w <= 0) continue;
+    const x = ((m[0] * bump.x + m[4] * height + m[8] * bump.y + m[12]) / w * 0.5 + 0.5) * cw;
+    const y = (0.5 - (m[1] * bump.x + m[5] * height + m[9] * bump.y + m[13]) / w * 0.5) * ch;
+    const spread = (10 + 43 * (1 - (1 - t) ** 3)) * dpr;
+    g.globalAlpha = (1 - t) ** 1.5 * 0.8;
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * Math.PI * 2 + 0.3;
+      g.fillStyle = i % 2 ? "#c5bc91" : "#e5dab4";
+      g.beginPath();
+      g.arc(x + Math.cos(a) * spread, y + Math.sin(a) * spread * 0.6,
+            (9 + t * 9) * dpr, 0, Math.PI * 2);
+      g.fill();
+    }
+    if (t < 0.5) {
+      g.globalAlpha = 1 - t * 2;
+      g.strokeStyle = "#fff3bc";
+      g.lineWidth = 4 * dpr;
+      g.lineCap = "round";
+      for (let i = 0; i < 3; i++) {
+        const a = -Math.PI * 0.85 + i * Math.PI * 0.35;
+        g.beginPath();
+        g.moveTo(x + Math.cos(a) * spread * 0.65, y + Math.sin(a) * spread * 0.65);
+        g.lineTo(x + Math.cos(a) * (spread + 15 * dpr), y + Math.sin(a) * (spread + 15 * dpr));
+        g.stroke();
+      }
+    }
+  }
+  g.restore();
+}
+
+function drawMinimap(cw, ch, dpr) {
+  if (!minimapFrame.complete || !minimapFrame.naturalWidth || !minimapOpening.complete || !minimapOpening.naturalWidth) return;
+  const width = Math.min(300, innerWidth * 0.41);
+  const height = width * 0.75;
+  const margin = 16;
+  const left = cw / dpr - width - margin;
+  const top = ch / dpr - height - margin;
+  const mapX = left + width * 0.07, mapY = top + height * 0.14;
+  const mapW = width * 0.86, mapH = height * 0.73;
+  const viewW = 90, viewH = viewW * mapH / mapW;
+  const originX = Math.max(0, Math.min(W - viewW, me.x - viewW / 2));
+  const originY = Math.max(0, Math.min(H - viewH, me.y - viewH / 2));
+  const sx = mapW / viewW, sy = mapH / viewH;
+  const point = (x, y) => [mapX + (x - originX) * sx, mapY + (y - originY) * sy];
+  const pixelW = Math.round(width * dpr), pixelH = Math.round(height * dpr);
+  if (minimapCanvas.width !== pixelW || minimapCanvas.height !== pixelH) {
+    minimapCanvas.width = pixelW; minimapCanvas.height = pixelH;
+  }
+  const g = minimapCanvas.getContext('2d');
+  g.clearRect(0, 0, pixelW, pixelH);
+  g.save();
+  g.scale(dpr, dpr);
+  g.translate(-left, -top);
+  g.save();
+  g.fillStyle = "#536d35";
+  g.fillRect(left, top, width, height);
+  g.strokeStyle = "#a38a60";
+  g.lineWidth = Math.max(2, sx * 4);
+  g.lineJoin = "round";
+  g.lineCap = "round";
+  const paths = [
+    [W, x => [x, H * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13)]],
+    [H, y => [W * 0.52 + 9 * Math.sin(y * 0.065 + 0.7), y]],
+    [W, x => [x, H * 0.22 + 5 * Math.sin(x * 0.07 + 1.8)]],
+  ];
+  for (const [length, sample] of paths) {
+    g.beginPath();
+    for (let i = 0; i <= length; i += 2) {
+      const p = point(...sample(i));
+      if (i === 0) g.moveTo(...p); else g.lineTo(...p);
+    }
+    g.stroke();
+  }
+  for (const p of peers.values()) {
+    if (performance.now() - p.seen > PEER_TIMEOUT) continue;
+    g.fillStyle = `hsl(${p.hue} 75% 65%)`;
+    g.strokeStyle = "#182413";
+    g.lineWidth = 1.5;
+    g.beginPath(); g.arc(...point(p.x, p.y), 3.5, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
+  const [x, y] = point(me.x, me.y);
+  g.translate(x, y); g.rotate(me.a);
+  g.fillStyle = "#f4ffca";
+  g.strokeStyle = "#243318";
+  g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(6, 0); g.lineTo(-4, -4); g.lineTo(-2, 0); g.lineTo(-4, 4); g.closePath();
+  g.fill(); g.stroke();
+  g.restore();
+  g.restore();
+  g.globalCompositeOperation = 'destination-in';
+  g.drawImage(minimapOpening, 0, 0, pixelW, pixelH);
+  g.globalCompositeOperation = 'source-over';
+  g.drawImage(minimapFrame, 0, 0, pixelW, pixelH);
+  hud.getContext('2d').drawImage(minimapCanvas, Math.round(left * dpr), Math.round(top * dpr));
+}
+
+function drawHud() {
+  const dpr = Math.min(devicePixelRatio || 1, innerWidth * innerHeight > 7000000 ? 1 : 1.35);
+  const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
+  if (hud.width !== cw || hud.height !== ch) { hud.width = cw; hud.height = ch; }
+  g.clearRect(0, 0, cw, ch);
+  updateScore(bladesCut, performance.now());
+  drawMowing(cw, ch, dpr);
+  drawBumps(cw, ch, dpr);
+  drawMinimap(cw, ch, dpr);
+}
+
+setTimeout(() => (help.style.opacity = "0"), 8000);
+
+let last = performance.now();
+function frame(ts) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (ts - last) / 1000);
+  last = ts;
+  if (!mownAt || !F) return;
+  const now = Date.now() + clockOffset;
+  drive(dt);
+  fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now), connected);
+  render(now, ts);
+  drawHud();
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

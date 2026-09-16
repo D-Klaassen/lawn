@@ -1,0 +1,8 @@
+Tool: built-in image_gen (imagegen skill)
+Asset: field-entry-banner.png
+
+Use case: stylized-concept
+Asset type: production game UI field-entry banner, isolated transparent PNG for a cozy stylized lawn-mowing game.
+Primary request: a proper illustrated fantasy quest discovery nameplate, replacing a plain font title. One horizontal carved meadow crest, with a broad dark forest-green blank inset for live field-name text, softly beveled warm brass edging, modest carved wood corners, a small central clover medallion perched above the top edge, and just a few sculpted leaves and tiny daisies tucked at the two ends. Friendly collectible game-object feel with hand-painted low-poly forms and crisp readable silhouettes. Restrained, charming, premium, not ornate or realistic.
+Composition: front-on flat UI asset, wide 3:1 composition. Banner occupies almost the entire width, centered with small transparent margin. Broad center 65% of the width must be empty smooth dark green, reserved for a dynamic title plus a small label above it. Decoration only at outside edges and central top crest. Shallow height suitable for a brief unobtrusive overlay above gameplay. Gold and cream highlights, green foliage, subtle wood grain.
+Constraints: genuinely transparent background with alpha, no checkerboard or solid background. No text, letters, numbers, interface mockup, screenshot, environment, people, tools, extra panels or watermark. Generate only the single reusable banner asset.

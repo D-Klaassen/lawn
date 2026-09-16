@@ -1,0 +1,8 @@
+Tool: built-in image_gen (imagegen skill)
+Asset: quest-card.png
+
+Use case: stylized-concept
+Asset type: complete production quest tracker panel artwork for a cozy lawn-mowing game, transparent PNG.
+Primary request: ONE cohesive illustrated quest card, landscape 4:3 proportions, designed to display at 340 pixels wide and 255 pixels high. A generous dark forest-green inset occupies the central 80 percent width and 75 percent height, framed by slim warm brass edging with modest carved wood corners. A small clover crest is integrated flush into the top-left corner, occupying no more than 12 percent of total width; tiny leaves and one daisy at opposite corners. Hand-painted chunky stylized game UI, restrained gold bevels, soft texture, clear silhouette. This is a full spacious panel, not a skinny horizontal title ribbon.
+Layout: keep central area entirely blank, smooth dark green for large dynamic field-name text in its upper third, and objective text plus a live progress bar in its lower half. No internal dividers or baked bar, no giant emblem, no text. The large empty inset is essential. Straight-on front view, centered panel almost fills image with small transparent margins. Cozy meadow palette, premium fantasy game UI, readable against bright green grass.
+Constraints: genuine transparent background with alpha outside the card, opaque dark green center. No text, lettering, numbers, screenshot, environment, extra panels, progress indicators, watermark or logo. No huge decorative badge. Produce one complete rectangular quest card asset.

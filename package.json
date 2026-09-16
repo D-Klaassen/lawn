@@ -1,0 +1,23 @@
+{
+  "name": "lawn",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:score": "esbuild src/score.js --bundle --format=esm --minify --outfile=public/score.js",
+    "predev": "npm run build:score",
+    "dev": "wrangler dev",
+    "predeploy": "npm run build:score",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "esbuild": "^0.28.2",
+    "sharp": "^0.35.4",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.131.1"
+  },
+  "dependencies": {
+    "number-flow": "^0.6.2"
+  }
+}

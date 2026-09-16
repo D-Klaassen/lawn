@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+
+# Built by `npm run build:score` before dev and deploy.
+public/score.js
+
+# Machine-local tool permissions.
+.claude/settings.local.json
