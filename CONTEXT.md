@@ -102,6 +102,26 @@ The Grace is kept by the Mower that was dazed, because a Mower only ever
 dazes itself. A rewritten client therefore cannot hold anybody: the answer to
 "may I be dazed again" is never asked of the Mower that is doing the ramming.
 
+## An Emote is read from across the Lawn
+
+An Emote is a card in the air, and a card too small is a card nobody reads at
+the far side of a field. The card is therefore wide, and two things keep it
+clear of the Mower that sent it.
+
+The card is measured in pixels and the Mower in world units, so the two are
+tied at the top of the Mower and the card hangs its own height above that
+point. A card placed at a world height instead sinks into the handlebar on a
+short window, where one world unit is worth fewer pixels.
+
+The size then falls with distance, against the Mower you drive: your own card
+never changes size, and a card far away is smaller, so the Lawn keeps its
+depth. It never falls below a size that can be read.
+
+The rest is motion, and motion is what says an Emote is new: the card springs
+past its size and back, breathes where it hangs, and lifts away as it ages
+out. A ring leaves it the moment it lands, for the Mower who was looking
+elsewhere. All of it stands still for a visitor who asks for less motion.
+
 ## The Lawn decides where a Mower is
 
 A Mow Stroke says where the Mower is now. It does not say where the swath
@@ -117,6 +137,13 @@ Mower held up by the line did drive the whole way. The budget fills at
 a client says it went further, the server moves it as far as the budget
 allows and does not cut the remainder of the swath.
 
+A new socket starts that budget empty. A full budget on arrival was worth 15
+Tiles of swath to anyone who opened a socket, cut, dropped it and came back,
+which is quicker than driving: 24 sockets cut 84 Tiles a second that way. An
+empty budget makes a reconnection worth 1 Tile a second, and costs an honest
+Mower nothing, because its first Mow Stroke only marks where it starts and its
+second comes 40 ms later, by which time it has earned the 0.5 Tiles it needs.
+
 A client that is rewritten thus gets no advantage. It can send a Mow Stroke
 every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
 phone. A reported position is also pulled back to within reach of the last Mow
@@ -131,10 +158,43 @@ Two holes stay open, because they are cheap and what they let through is not:
 
 - A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
   it hibernated — is believed one time. Its first Mow Stroke only says where
-  it starts and cuts nothing, so the cost of a teleport is one reconnection
-  for one stroke.
+  it starts and cuts nothing, so a reconnection buys a place to stand and no
+  grass.
 - The score in a position report is still the tally of the client. The server
   relays it and does not count blades itself.
+
+## One address, twelve Mowers
+
+Every socket earns its own travel, so one person with many sockets cuts what
+many visitors cut. Nothing in what a client sends tells the two apart; only
+where it comes from does. The Lawn therefore counts: `MOWERS_PER_ADDRESS`
+sockets from one address at a time, and the next one gets a 429 instead of a
+Lawn. A new socket also costs the Lawn a whole Snapshot of 110 kB, so this
+holds down what it costs to open sockets as well as what they can cut.
+
+The address is a tag on the socket and not a note in memory. The count is then
+an index lookup, and it stays right while the Lawn hibernates — which is where
+the budgets in the WeakMaps are lost. Cloudflare writes `CF-Connecting-IP`
+itself, so a client cannot say it comes from somewhere else.
+
+This is a blunt instrument, and that is the reason to write it down: a house,
+an office and a whole mobile network each look like one address. It bounds
+what one address can do; it does not stop it. Twelve sockets driven flat out
+cut 147 Tiles a second, against 13 for one honest Mower. The cap is what
+decides that number, so lower it if the Lawn is still being shaved.
+
+A socket that dies without saying so keeps its place. A tab that is killed or
+a phone that loses its signal leaves a socket the runtime still reports as
+open, for ten minutes and more, so a visitor can be kept out by the ghosts of
+its own dropped connections. A tab that is closed or reloaded says goodbye
+properly and frees its place at once, which is what nearly every visitor does.
+
+Sending the oldest Mower away instead of refusing the newcomer was tried and
+dropped. `close()` on the server moves that socket to CLOSING, but the client
+is never told and the socket never leaves the count, so the cap would let
+every newcomer in and count nothing — no cap at all, and silently. Refusing
+the newcomer is worse for the rare visitor with ghosts and right for everyone
+else, so it stands until the close can be made to land.
 
 ## The score is a sum, so it must never take a NaN
 
