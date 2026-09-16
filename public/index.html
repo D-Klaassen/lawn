@@ -366,7 +366,11 @@ let myId = "";
 /** Your own paint. It comes from your id, so every screen agrees on it. */
 let myHue = 80;
 
-let W = 288, H = 192, REGROW_MS = 1800000, RADIUS = 2.6;
+/** A Snapshot entry is how far a Tile is through its Regrowth, at this scale. */
+const SNAPSHOT_SCALE = 65535;
+let W = 288, H = 192, RADIUS = 2.6;
+/** Milliseconds of Regrowth per Tile. The server says how to build it. */
+let regrowMs = null;
 let mownAt = null;       // absolute ms per Tile
 let mowDir = null;       // heading of the cut per Tile
 let clockOffset = 0, connected = false, socket = null;
@@ -444,10 +448,49 @@ const keys = new Set();
 
 function heightAt(i, now) {
   const age = now - mownAt[i];
-  if (age >= REGROW_MS) return 1;
+  const regrow = regrowMs[i];
+  if (age >= regrow) return 1;
   if (age <= 0) return 0;
-  const t = age / REGROW_MS;
+  const t = age / regrow;
   return 1 - (1 - t) * (1 - t);
+}
+
+/** One lattice point of the Growth Rate noise, 0 to 1. Mirrors the server. */
+function vigourAt(x, y) {
+  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Milliseconds of Regrowth for every Tile, from the bounds in the hello. The
+ * Growth Rate is a pure function of the position of the Tile, so this table is
+ * the one the server used to write the Snapshot. Mirrors the server exactly.
+ */
+function buildRegrow(min, max, patch) {
+  const table = new Float32Array(W * H);
+  const span = max - min;
+  for (let y = 0; y < H; y++) {
+    const gy = y / patch;
+    const y0 = Math.floor(gy);
+    const ty = gy - y0;
+    const fy = ty * ty * (3 - 2 * ty);
+    for (let x = 0; x < W; x++) {
+      const gx = x / patch;
+      const x0 = Math.floor(gx);
+      const tx = gx - x0;
+      const fx = tx * tx * (3 - 2 * tx);
+      const a = vigourAt(x0, y0);
+      const b = vigourAt(x0 + 1, y0);
+      const c = vigourAt(x0, y0 + 1);
+      const d = vigourAt(x0 + 1, y0 + 1);
+      const top = a + (b - a) * fx;
+      const bottom = c + (d - c) * fx;
+      table[y * W + x] = min + (top + (bottom - top) * fy) * span;
+    }
+  }
+  return table;
 }
 
 /** Cut the swath between two points. Mirrors the server exactly. */
@@ -515,7 +558,7 @@ function connect() {
       settling.clear();
       mownAt = new Float64Array(ages.length);
       if (!mowDir || mowDir.length !== ages.length) mowDir = new Float32Array(ages.length);
-      for (let i = 0; i < ages.length; i++) mownAt[i] = now - ages[i] * 1000;
+      for (let i = 0; i < ages.length; i++) mownAt[i] = now - (ages[i] / SNAPSHOT_SCALE) * regrowMs[i];
       fieldPx = new Uint8Array(ages.length * 4);
       for (let i = 0; i < ages.length; i++) paintDir(i, mowDir[i]);
       fieldDirty = true;
@@ -525,7 +568,8 @@ function connect() {
     if (m.t === "hello") {
       myId = m.id;
       myHue = hueOf(myId);
-      W = m.w; H = m.h; REGROW_MS = m.regrow * 1000; RADIUS = m.radius;
+      W = m.w; H = m.h; RADIUS = m.radius;
+      regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       fieldQuests.resize(W, H);
       restorePosition();
       clockOffset = m.now - Date.now();
