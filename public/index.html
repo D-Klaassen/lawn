@@ -1110,7 +1110,7 @@ const FIELD_WGSL = `struct Cam {
   misc     : vec4f,   // time, patch origin in cells (x, y), blades per row
   misc2    : vec4f,   // grid w, grid h, cell size, blade height
   opts     : vec4f,   // mower count, mower scale, ambient, daylight 0..1
-  sunCol   : vec4f,
+  sunCol   : vec4f,   // rgb; w is cloud drift in Tiles
   skyCol   : vec4f,   // rgb; w is one over the sun's half extent
   mowers   : array<vec4f, 8>,     // x, z, heading, cutting vibration
   mowerCol : array<vec4f, 8>,     // paint
@@ -1227,6 +1227,14 @@ fn cloverDensity(root : vec2f) -> f32 {
 fn lawnEdge(p : vec2f) -> f32 {
   let edge = min(min(p.x, C.misc2.x - p.x), min(p.y, C.misc2.y - p.y));
   return smoothstep(-5.0, 4.0, edge + (vnoise(p * 0.18) - 0.5) * 4.0);
+}
+
+// Project overhead cloud cover along the sun direction, independent of the camera.
+const CLOUD_HEIGHT = 13.0;
+fn cloudCover(p : vec2f) -> f32 {
+  let q = (p - vec2f(C.sunCol.w, C.sunCol.w * 0.35)) * 0.065;
+  let shape = vnoise(q) * 0.78 + vnoise(q * 2.7 + vec2f(17.3)) * 0.22;
+  return smoothstep(0.48, 0.70, shape);
 }
 
 /** How much sun reaches a point, from the sun's own depth map. */
@@ -1387,7 +1395,8 @@ fn vs_blade_shadow(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii 
 fn shade(base : vec3f, n : vec3f, wpos : vec3f, aoIn : f32) -> vec3f {
   let sun = normalize(C.sun.xyz);
   let lam = max(dot(n, sun), 0.0);
-  let vis = sunlight(wpos);
+  let cloudPoint = wpos.xz + sun.xz * max(0.0, CLOUD_HEIGHT - wpos.y) / max(sun.y, 0.15);
+  let vis = sunlight(wpos) * (1.0 - cloudCover(cloudPoint) * 0.55);
   let sky = C.skyCol.rgb * (C.opts.z * (0.65 + 0.35 * n.y));
   return base * (sky + C.sunCol.rgb * lam * mix(0.3, 1.0, vis)) * aoIn;
 }
@@ -1956,6 +1965,7 @@ async function initField() {
 }
 
 let F = null;
+let cloudDrift = 0, cloudTick = null;
 initField().then((f) => (F = f)).catch((e) => {
   document.getElementById("fallback").style.display = "grid";
   document.getElementById("fallback-text").textContent = `The lawn needs WebGPU. ${e.message}`;
@@ -2079,6 +2089,9 @@ function render(now, ts) {
   const cellSize = CELL3 * sceneScale;
   const perRow = Math.round(PATCH / cellSize);
   const ox = Math.round((tx - PATCH / 2) / CELL3), oy = Math.round((tz - PATCH / 2) / CELL3);
+  // Pause ambient motion when requested; cap the step after a hidden tab resumes.
+  if (cloudTick !== null && !reducedMotion.matches) cloudDrift += Math.min((ts - cloudTick) / 1000, 0.1) * 0.32;
+  cloudTick = ts;
   const C = F.camData;
   C.set(vp, 0);
   C.set(lightVP, 16);
@@ -2089,6 +2102,7 @@ function render(now, ts) {
   const ms = allMowers().slice(0, 8);
   C[48] = ms.length; C[49] = MOWER_SCALE; C[50] = air.ambient; C[51] = air.daylight;
   C[52] = air.light[0]; C[53] = air.light[1]; C[54] = air.light[2];
+  C[55] = cloudDrift;
   C[56] = air.skyCol[0]; C[57] = air.skyCol[1]; C[58] = air.skyCol[2]; C[59] = 1 / sunHalf;
   ms.forEach((m, k) => {
     C[60 + k * 4] = m.x; C[61 + k * 4] = m.y; C[62 + k * 4] = m.a; C[63 + k * 4] = m.me && !reducedMotion.matches ? mowing : 0;
