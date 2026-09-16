@@ -181,7 +181,17 @@ const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
 const SCORE_KEY = "scores";
-const PERSIST_DELAY_MS = 2000;
+/**
+ * How long the Lawn holds its Mow Strokes before it writes them down. Every
+ * write is four rows and every alarm is a request, and the Lawn is written
+ * whole each time, so writing every two seconds spent more of the day's
+ * budget than the mowing did. Ten seconds is short enough that the Lawn is
+ * still awake when the alarm comes: a Lawn nobody is driving on is put out of
+ * memory after a while, and what it had not written down goes with it. The
+ * price of that is ten seconds of Mow Strokes on a Lawn that takes hours to
+ * grow back.
+ */
+const PERSIST_DELAY_MS = 10000;
 /**
  * Mowers the Lawn keeps a tally for. Past this it forgets the lowest score of
  * a Mower that is not driving, so the state of the Lawn stays bounded the way

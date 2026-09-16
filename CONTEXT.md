@@ -68,8 +68,8 @@ Tile is. Therefore:
   The server sends only Mow Strokes.
 - The state is 13.8 kB (`Uint32Array`), and it stays that size for ever.
 
-An alarm exists, but only to write the state to storage 2 seconds after a
-change. It is a debounce, not a simulation step.
+An alarm exists, but only to write the state to storage 10 seconds after a
+change. It is a debounce, not a simulation step. See "What a report costs".
 
 ## Presence
 
@@ -101,7 +101,12 @@ choice:
 - **A Mower that stands still says so every 500 ms.** A report that repeats
   the last one is news to nobody and still costs the Lawn. It cannot stop
   altogether: a client forgets a Mower it has not heard from for 4 seconds.
-Together these are about a third of what a Mower used to cost while it
+- **The Lawn is written every 10 seconds, not every 2.** A Lawn nobody drives
+  on is put out of memory after a while, and what it had not written down
+  goes with it. The price is 10 seconds of Mow Strokes on a Lawn that takes
+  hours to grow back.
+
+Together these are about a quarter of what a Mower used to cost while it
 drives, and a twentieth while it stands still.
 
 ## A Bump dazes both Mowers
