@@ -410,6 +410,8 @@ const SNAPSHOT_SCALE = 65535;
 let W = 288, H = 192, RADIUS = 2.6;
 /** Milliseconds of Regrowth per Tile. The server says how to build it. */
 let regrowMs = null;
+/** Milliseconds a Tile stays mown before it grows. The server says how long. */
+let cooldownMs = 0;
 let mownAt = null;       // absolute ms per Tile
 let mowDir = null;       // heading of the cut per Tile
 let clockOffset = 0, connected = false, socket = null;
@@ -501,11 +503,12 @@ const keys = new Set();
 function heightAt(i, now) {
   const age = now - mownAt[i];
   const regrow = regrowMs[i];
-  if (age >= regrow) return 1;
-  // A Tile the client cannot date reads as mown. Without this the answer is
-  // NaN, and one NaN in the score stays there for the rest of the session.
-  if (!(age > 0) || !(regrow > 0)) return 0;
-  const t = age / regrow;
+  if (age >= cooldownMs + regrow) return 1;
+  // A Tile the client cannot date reads as mown, and so does a Tile still in
+  // its Cooldown. Without this the answer is NaN, and one NaN in the score
+  // stays there for the rest of the session.
+  if (!(age > cooldownMs) || !(regrow > 0)) return 0;
+  const t = (age - cooldownMs) / regrow;
   return 1 - (1 - t) * (1 - t);
 }
 
@@ -620,7 +623,9 @@ function connect() {
       settling.clear();
       mownAt = new Float64Array(ages.length);
       if (!mowDir || mowDir.length !== ages.length) mowDir = new Float32Array(ages.length);
-      for (let i = 0; i < ages.length; i++) mownAt[i] = now - (ages[i] / SNAPSHOT_SCALE) * regrowMs[i];
+      // A Snapshot entry spans the Cooldown and the Regrowth together, so the
+      // moment it dates a Tile to is that far back along the whole cycle.
+      for (let i = 0; i < ages.length; i++) mownAt[i] = now - (ages[i] / SNAPSHOT_SCALE) * (cooldownMs + regrowMs[i]);
       fieldPx = new Uint8Array(ages.length * 4);
       for (let i = 0; i < ages.length; i++) paintDir(i, mowDir[i]);
       fieldDirty = true;
@@ -646,6 +651,7 @@ function connect() {
     if (m.t === "hello") {
       W = m.w; H = m.h; RADIUS = m.radius;
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
+      cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
       restorePosition();
       clockOffset = m.now - Date.now();

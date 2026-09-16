@@ -27,6 +27,12 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   sign on the screen that says the controls are gone.
 - **Regrowth** — the return of Blade Height to 1. A Lawn nobody mows is
   overgrown again the same day.
+- **Cooldown** — the hour a Tile stays mown before its Regrowth starts. It is
+  the same hour for every Tile. Without it the grass behind the Mower comes
+  back before the far side of a Field is cut, and a Field never reads as
+  wholly mown; with it a Mower can finish a Field and watch it stand at 100%.
+- **Cycle** — the Cooldown and the Regrowth of one Tile together: the seconds
+  from a Mow Stroke to a fully overgrown Tile.
 - **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 2 to
   6 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
   so the grass comes back in slow ground and quick ground. It is a pure
@@ -39,17 +45,19 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Score** — how many blades one Mower has cut. The Lawn counts them as it
   cuts them. It is the sum of the Blade Height of each Tile of grass the
   Mower took, so tall grass is worth more than stubble.
-- **Snapshot** — how far each Tile is through its Regrowth, from 0 to
-  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Regrowth, so
+- **Snapshot** — how far each Tile is through its Cycle, from 0 to
+  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Cycle, so
   the wire carries the fraction and not the age in seconds. The wire therefore
-  stays the same when the Growth Rate changes.
+  stays the same when the Growth Rate or the Cooldown changes. The fraction
+  spans the whole Cycle and not the Regrowth alone, so one entry still says
+  everything about one Tile.
 
 ## Why there is no server tick
 
 The Durable Object stores one number per Tile: the epoch second of the last
-Mow Stroke. Blade Height is a pure function of `now - mownAt` and the Growth
-Rate of the Tile, which is itself a pure function of where the Tile is.
-Therefore:
+Mow Stroke. Blade Height is a pure function of `now - mownAt`, the Cooldown,
+and the Growth Rate of the Tile, which is itself a pure function of where the
+Tile is. Therefore:
 
 - No timer runs to make the grass grow. The Lawn stays correct while the
   Durable Object hibernates.

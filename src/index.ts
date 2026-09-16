@@ -18,6 +18,13 @@ const TILE_COUNT = LAWN_WIDTH * LAWN_HEIGHT;
 const REGROW_MIN_SECONDS = 7200;
 const REGROW_MAX_SECONDS = 21600;
 /**
+ * Seconds a Tile stays mown before its Regrowth starts. Without it the grass
+ * behind the Mower is already coming back before the far side of a Field is
+ * cut, and a Field can never read as wholly mown. One hour is long enough to
+ * finish a Field and see it stand at 100%.
+ */
+const COOLDOWN_SECONDS = 3600;
+/**
  * Width of one patch of like-minded grass, in Tiles. Below about ten the
  * Growth Rate reads as speckle on single Tiles instead of as slow ground.
  */
@@ -36,6 +43,14 @@ function vigourAt(x: number, y: number): number {
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
   h ^= h >>> 13;
   return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Seconds from a Mow Stroke to a fully overgrown Tile: the Cooldown first,
+ * then the Regrowth. It is the span a Snapshot entry measures.
+ */
+function cycle(regrow: number): number {
+  return COOLDOWN_SECONDS + regrow;
 }
 
 /**
@@ -99,10 +114,10 @@ const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
  * the score the server counts the same score the Mower watches.
  */
 function bladeHeight(mownAt: number, regrow: number, now: number): number {
-  const age = mownAt === 0 ? regrow : now - mownAt;
-  if (age >= regrow) return 1;
-  if (!(age > 0) || !(regrow > 0)) return 0;
-  const t = age / regrow;
+  const age = mownAt === 0 ? cycle(regrow) : now - mownAt;
+  if (age >= cycle(regrow)) return 1;
+  if (!(age > COOLDOWN_SECONDS) || !(regrow > 0)) return 0;
+  const t = (age - COOLDOWN_SECONDS) / regrow;
   return 1 - (1 - t) * (1 - t);
 }
 /** Radius of one Mow Stroke, in Tiles. */
@@ -634,6 +649,7 @@ export class Lawn extends DurableObject {
       h: LAWN_HEIGHT,
       regrowMin: REGROW_MIN_SECONDS,
       regrowMax: REGROW_MAX_SECONDS,
+      cooldown: COOLDOWN_SECONDS,
       patch: PATCH_TILES,
       radius: MOW_RADIUS,
       now: Date.now(),
@@ -642,15 +658,20 @@ export class Lawn extends DurableObject {
     };
   }
 
-  /** How far every Tile is through its Regrowth, 0 to SNAPSHOT_SCALE. */
+  /**
+   * How far every Tile is through Cooldown and Regrowth together, 0 to
+   * SNAPSHOT_SCALE. The span is the whole cycle and not the Regrowth alone,
+   * so one entry still says everything about one Tile and the wire keeps its
+   * size.
+   */
   private snapshot(): ArrayBuffer {
     const now = Math.floor(Date.now() / 1000);
     const ages = new Uint16Array(TILE_COUNT);
     for (let i = 0; i < TILE_COUNT; i++) {
       const mown = this.mownAt[i];
-      const regrow = REGROW[i];
-      const age = mown === 0 ? regrow : now - mown;
-      const grown = age >= regrow ? 1 : age < 0 ? 0 : age / regrow;
+      const span = cycle(REGROW[i]);
+      const age = mown === 0 ? span : now - mown;
+      const grown = age >= span ? 1 : age < 0 ? 0 : age / span;
       ages[i] = Math.round(grown * SNAPSHOT_SCALE);
     }
     return ages.buffer;
