@@ -82,6 +82,38 @@ sample first, then mask the result.
 The time of day comes from the server clock, so every Mower is in the same
 hour of the same day. A full cycle is 10 minutes.
 
+## Frame rate
+
+Every frame the field grows itself on the GPU. One compute pass turns the
+patch into a record per blade — root, lean, width, tint — and writes only the
+blades it keeps into a buffer, with the count in the arguments of an indirect
+draw. The blades the camera and the sun both miss never reach a vertex
+shader, and the blade a vertex belongs to is worked out once, not twenty
+times over. Flowers and clover take the same route, and an empty cell is
+dropped there instead of drawing zero-sized geometry.
+
+The Lawn itself is a texture, one texel per Tile: Blade Height in red, the
+heading of the cut as cosine and sine in green and blue. The sampler does the
+bilinear blend that shader code used to do by hand, and the heading takes two
+`textureGather` calls instead of four reads and four trigonometric functions.
+The texture is rebuilt only when a Mow Stroke touches it, while cut grass
+settles, or four times a second — Regrowth cannot move a Blade Height by one
+part in 255 faster than that.
+
+The still parts of the ground — verge, lawn edge and the two coarse noises —
+are baked into one texture the first time the Lawn says how big it is. Only
+the finest grain is still worked out per pixel.
+
+What remains is fill rate, so the field draws at a density it can hold. It
+asks for 1.35 device pixels per CSS pixel and gives a step back whenever the
+mean frame gap of the last second misses the display's own interval, down to
+one device pixel per CSS pixel. It takes a step back only after three good
+seconds, so a moment of load does not start the resolution swinging. The
+measure must be the mean and not the median: with vsync every gap is a
+multiple of the interval, so a screen that misses every second frame still
+has a median of exactly one interval and reads as healthy. The HUD is a
+separate canvas and stays sharp throughout.
+
 ## Generated geometry
 
   A moving patch of procedural geometry must hash its **absolute world cell**,
