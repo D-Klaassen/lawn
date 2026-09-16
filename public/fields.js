@@ -39,7 +39,8 @@ export function createFieldQuests() {
   const bannerTitle = document.getElementById('field-banner-name');
   const bannerLabel = document.getElementById('field-banner-label');
   const list = document.getElementById('world-quest-list');
-  const summary = document.getElementById('world-quest-summary');
+  const here = document.getElementById('world-quest-here');
+  const done = document.getElementById('world-quest-done');
   let width = 0, height = 0, fields = [];
   let rows = [];
   let active = -1, candidate = -1, candidateSince = 0, checkedAt = -Infinity;
@@ -70,7 +71,8 @@ export function createFieldQuests() {
         return { row, meter, badge: row.querySelector('.world-quest-badge'), status: row.querySelector('.world-quest-status'), percent: row.querySelector('.world-quest-percent'), completed: false };
       });
       list.replaceChildren(...rows.map(({ row }) => row));
-      summary.textContent = '0 / 6 completed';
+      here.textContent = '';
+      done.textContent = `0 / ${fields.length} completed`;
     },
     update(x, y, now, heightAt) {
       const next = fieldAt(x, y, width, height);
@@ -80,6 +82,7 @@ export function createFieldQuests() {
       if (next >= 0 && next !== active && now - candidateSince >= 450) {
         active = next; entered = true;
         announce(fields[active].name, 'Field quest discovered');
+        here.textContent = `${fields[active].name} ${rows[active].percent.textContent}`;
         rows.forEach(({ row }, id) => row.classList.toggle('active', id === active));
       }
       if (!entered && now - checkedAt < 500) return;
@@ -92,6 +95,7 @@ export function createFieldQuests() {
         const percent = complete ? 100 : Math.min(99, Math.floor(value + 1e-7));
         quest.meter.value = value;
         quest.percent.textContent = `${percent}%`;
+        if (id === active) here.textContent = `${fields[id].name} ${percent}%`;
         if (!complete) return;
         quest.completed = true;
         quest.row.classList.add('completed');
@@ -99,7 +103,7 @@ export function createFieldQuests() {
         quest.status.textContent = 'Completed';
         announce(fields[id].name, 'World quest completed');
       });
-      summary.textContent = `${rows.filter(quest => quest.completed).length} / ${fields.length} completed`;
+      done.textContent = `${rows.filter(quest => quest.completed).length} / ${fields.length} completed`;
     },
   };
 }

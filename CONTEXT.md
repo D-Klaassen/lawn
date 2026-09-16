@@ -59,6 +59,33 @@ The client sends a maximum of one Mow Stroke per frame. The Mow Stroke covers
 the full movement since the last one. A fast drag thus cuts a continuous
 swath with few messages.
 
+## Driving with a thumb
+
+A coarse pointer gets a stick in the bottom left corner and two buttons in the
+bottom right. The stick is a **direction**, not a wheel: it says where on the
+Lawn the Mower must go, and the Mower turns towards that heading as fast as it
+can turn. This works because the camera holds one heading. Wheel controls read
+as inverted every time the Mower faces the bottom of the screen, which is half
+of the time.
+
+The stick gives only the throttle and the steering. The Mower obeys the same
+acceleration, drag and turn rate as the keys, so a Mow Stroke from a thumb and
+a Mow Stroke from a keyboard are the same thing.
+
+The base of the stick moves to the thumb that touches the zone. A stick with a
+fixed base is a stick the thumb must find first, and a thumb that misses drives
+the Mower into the hedge.
+
+Three things must stay clear of the thumbs on a small screen: the score, the
+title and the credit move to the top, the Lawn keeps the middle, and the World
+Quest Tracker folds down to its heading. Folded, the Tracker still says which
+Field you are in and how much of it is cut, because that is the part you read
+while you drive.
+
+A phone held sideways is 812 x 390: wide enough to pass a width breakpoint and
+far too short for the layout behind it. The small layout therefore answers to
+both, and the minimap is measured against the height as well as the width.
+
 ## Files
 
 - `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
