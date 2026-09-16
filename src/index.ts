@@ -9,8 +9,66 @@ const LAWN_WIDTH = 288;
 const LAWN_HEIGHT = 192;
 const TILE_COUNT = LAWN_WIDTH * LAWN_HEIGHT;
 
-/** Seconds a Tile needs to grow from mown to fully overgrown. */
-const REGROW_SECONDS = 1800;
+/**
+ * Seconds a Tile needs to grow from mown to fully overgrown. No Tile grows at
+ * the speed of its neighbour: the Growth Rate moves between these two bounds
+ * across the Lawn, so the field comes back uneven, the way a real lawn does.
+ */
+const REGROW_MIN_SECONDS = 72000;
+const REGROW_MAX_SECONDS = 100800;
+/**
+ * Width of one patch of like-minded grass, in Tiles. Below about ten the
+ * Growth Rate reads as speckle on single Tiles instead of as slow ground.
+ */
+const PATCH_TILES = 16;
+/**
+ * Full scale of one Snapshot entry. A Regrowth is longer than 65535 seconds,
+ * so a Snapshot carries how far a Tile is through its Regrowth, not its age
+ * in seconds. One step is about 1.5 seconds, far below one part in 255 of
+ * Blade Height.
+ */
+const SNAPSHOT_SCALE = 65535;
+
+/** One lattice point of the Growth Rate noise, 0 to 1. */
+function vigourAt(x: number, y: number): number {
+  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Seconds of Regrowth for every Tile. It is a pure function of the position of
+ * the Tile, so the client works out the same table and nothing is stored or
+ * sent. Both sides hold it as a table because the Lawn is read Tile by Tile,
+ * many times a second, and the noise is the same on every read.
+ */
+function regrowTable(width: number, height: number): Float32Array {
+  const table = new Float32Array(width * height);
+  const span = REGROW_MAX_SECONDS - REGROW_MIN_SECONDS;
+  for (let y = 0; y < height; y++) {
+    const gy = y / PATCH_TILES;
+    const y0 = Math.floor(gy);
+    const ty = gy - y0;
+    const fy = ty * ty * (3 - 2 * ty);
+    for (let x = 0; x < width; x++) {
+      const gx = x / PATCH_TILES;
+      const x0 = Math.floor(gx);
+      const tx = gx - x0;
+      const fx = tx * tx * (3 - 2 * tx);
+      const a = vigourAt(x0, y0);
+      const b = vigourAt(x0 + 1, y0);
+      const c = vigourAt(x0, y0 + 1);
+      const d = vigourAt(x0 + 1, y0 + 1);
+      const top = a + (b - a) * fx;
+      const bottom = c + (d - c) * fx;
+      table[y * width + x] = REGROW_MIN_SECONDS + (top + (bottom - top) * fy) * span;
+    }
+  }
+  return table;
+}
+
+const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
 /** Radius of one Mow Stroke, in Tiles. */
 const MOW_RADIUS = 2.6;
 /**
@@ -238,7 +296,9 @@ export class Lawn extends DurableObject {
       id,
       w: LAWN_WIDTH,
       h: LAWN_HEIGHT,
-      regrow: REGROW_SECONDS,
+      regrowMin: REGROW_MIN_SECONDS,
+      regrowMax: REGROW_MAX_SECONDS,
+      patch: PATCH_TILES,
       radius: MOW_RADIUS,
       now: Date.now(),
       mowers: this.ctx.getWebSockets().length,
@@ -246,14 +306,16 @@ export class Lawn extends DurableObject {
     };
   }
 
-  /** Age of every Tile in seconds, capped at a full regrowth. */
+  /** How far every Tile is through its Regrowth, 0 to SNAPSHOT_SCALE. */
   private snapshot(): ArrayBuffer {
     const now = Math.floor(Date.now() / 1000);
     const ages = new Uint16Array(TILE_COUNT);
     for (let i = 0; i < TILE_COUNT; i++) {
       const mown = this.mownAt[i];
-      const age = mown === 0 ? REGROW_SECONDS : now - mown;
-      ages[i] = age >= REGROW_SECONDS ? REGROW_SECONDS : age < 0 ? 0 : age;
+      const regrow = REGROW[i];
+      const age = mown === 0 ? regrow : now - mown;
+      const grown = age >= regrow ? 1 : age < 0 ? 0 : age / regrow;
+      ages[i] = Math.round(grown * SNAPSHOT_SCALE);
     }
     return ages.buffer;
   }

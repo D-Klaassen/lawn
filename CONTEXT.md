@@ -12,13 +12,24 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Mow Stroke** — the swath between two pointer positions. The Mower cuts a
   capsule with radius `MOW_RADIUS` around that line.
 - **Mower** — one connected visitor.
-- **Regrowth** — the return of Blade Height to 1. It takes `REGROW_SECONDS`.
-- **Snapshot** — the age of each Tile in seconds, sent as a `Uint16Array`.
+- **Regrowth** — the return of Blade Height to 1. A Lawn nobody mows is
+  overgrown again the next day.
+- **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 20 to
+  28 hours. It is a smooth noise over the Lawn, in patches of `PATCH_TILES`,
+  so the grass comes back in slow ground and quick ground. It is a pure
+  function of the position of the Tile: no one stores it and no one sends it,
+  and both sides build the same table.
+- **Snapshot** — how far each Tile is through its Regrowth, from 0 to
+  `SNAPSHOT_SCALE`, sent as a `Uint16Array`. A Regrowth is longer than 65535
+  seconds, and no two Tiles share a Regrowth, so the wire carries the
+  fraction, not the age in seconds.
 
 ## Why there is no server tick
 
 The Durable Object stores one number per Tile: the epoch second of the last
-Mow Stroke. Blade Height is a pure function of `now - mownAt`. Therefore:
+Mow Stroke. Blade Height is a pure function of `now - mownAt` and the Growth
+Rate of the Tile, which is itself a pure function of where the Tile is.
+Therefore:
 
 - No timer runs to make the grass grow. The Lawn stays correct while the
   Durable Object hibernates.
