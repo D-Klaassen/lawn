@@ -54,6 +54,26 @@ client forgets a Mower it has not heard from for 4 seconds. Hibernation
 therefore costs almost nothing: a Lawn that wakes has forgotten where each
 Mower stands, and the next Mow Stroke says it again.
 
+## An Emote is read from across the Lawn
+
+An Emote is a card in the air, and a card too small is a card nobody reads at
+the far side of a field. The card is therefore wide, and two things keep it
+clear of the Mower that sent it.
+
+The card is measured in pixels and the Mower in world units, so the two are
+tied at the top of the Mower and the card hangs its own height above that
+point. A card placed at a world height instead sinks into the handlebar on a
+short window, where one world unit is worth fewer pixels.
+
+The size then falls with distance, against the Mower you drive: your own card
+never changes size, and a card far away is smaller, so the Lawn keeps its
+depth. It never falls below a size that can be read.
+
+The rest is motion, and motion is what says an Emote is new: the card springs
+past its size and back, breathes where it hangs, and lifts away as it ages
+out. A ring leaves it the moment it lands, for the Mower who was looking
+elsewhere. All of it stands still for a visitor who asks for less motion.
+
 ## The Lawn decides where a Mower is
 
 A Mow Stroke says where the Mower is now. It does not say where the swath
@@ -68,6 +88,13 @@ Mower held up by the line did drive the whole way. The budget fills at
 `MAX_SPEED * SPEED_TOLERANCE` and holds `TRAVEL_BANK_SECONDS` of driving. When
 a client says it went further, the server moves it as far as the budget
 allows and does not cut the remainder of the swath.
+
+A new socket starts that budget empty. A full budget on arrival was worth 15
+Tiles of swath to anyone who opened a socket, cut, dropped it and came back,
+which is quicker than driving: 24 sockets cut 84 Tiles a second that way. An
+empty budget makes a reconnection worth 1 Tile a second, and costs an honest
+Mower nothing, because its first Mow Stroke only marks where it starts and its
+second comes 40 ms later, by which time it has earned the 0.5 Tiles it needs.
 
 A client that is rewritten thus gets no advantage. It can send a Mow Stroke
 every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
@@ -89,30 +116,97 @@ hibernated — is believed one time. Its first Mow Stroke only says where it
 starts and cuts nothing, so the cost of a teleport is one reconnection for one
 stroke.
 
+- A Mower the Lawn has not seen — a new socket, or one the Lawn forgot while
+  it hibernated — is believed one time. Its first Mow Stroke only says where
+  it starts and cuts nothing, so a reconnection buys a place to stand and no
+  grass.
+
+## One address, twelve Mowers
+
+Every socket earns its own travel, so one person with many sockets cuts what
+many visitors cut. Nothing in what a client sends tells the two apart; only
+where it comes from does. The Lawn therefore counts: `MOWERS_PER_ADDRESS`
+sockets from one address at a time, and the next one gets a 429 instead of a
+Lawn. A new socket also costs the Lawn a whole Snapshot of 110 kB, so this
+holds down what it costs to open sockets as well as what they can cut.
+
+The address is a tag on the socket and not a note in memory. The count is then
+an index lookup, and it stays right while the Lawn hibernates — which is where
+the budgets in the WeakMaps are lost. Cloudflare writes `CF-Connecting-IP`
+itself, so a client cannot say it comes from somewhere else.
+
+This is a blunt instrument, and that is the reason to write it down: a house,
+an office and a whole mobile network each look like one address. It bounds
+what one address can do; it does not stop it. Twelve sockets on twelve Keys
+driven flat out shave 147 Tiles a second off the Lawn, against 13 for one
+honest Mower. The cap is what decides that number, so lower it if the Lawn is
+still being shaved.
+
+What it no longer has to hold back is the board. Twelve sockets on twelve Keys
+are twelve Scores, and twelve sockets on one Key share one budget, so no Score
+grows faster than one Mower whatever this cap is set to. The cap is now about
+the Lawn and what a socket costs, not about who is at the top.
+
+A socket that dies without saying so keeps its place. A tab that is killed or
+a phone that loses its signal leaves a socket the runtime still reports as
+open, for ten minutes and more, so a visitor can be kept out by the ghosts of
+its own dropped connections. A tab that is closed or reloaded says goodbye
+properly and frees its place at once, which is what nearly every visitor does.
+
+Sending the oldest Mower away instead of refusing the newcomer was tried and
+dropped. `close()` on the server moves that socket to CLOSING, but the client
+is never told and the socket never leaves the count, so the cap would let
+every newcomer in and count nothing — no cap at all, and silently. Refusing
+the newcomer is worse for the rare visitor with ghosts and right for everyone
+else, so it stands until the close can be made to land.
+
+## The score is a sum, so it must never take a NaN
+
+The score adds one Blade Height for each Tile the Mower cuts. A sum has no
+memory of its parts: one addend that is not a number makes every later score
+NaN, for as long as the sum stands. On the Lawn that sum now outlives the
+page, so one bad addend would follow a Mower between visits.
+
+The gates stop this on both sides. `heightAt` on the client and `bladeHeight`
+on the Lawn answer 0 for a Tile they cannot date, instead of NaN, which is why
+the Lawn may add its answer without looking at it; the client adds only a
+Blade Height above zero. And `updateScore` refuses a score that is not a
+finite number, so nothing that is not a number reaches the screen. The board
+reads the score of another Mower the same way, because `??` passes a NaN
+through and only catches a null.
+
+Nothing about the score is kept in the browser any more. A score in
+`localStorage` is a score the visitor can write, and the Lawn holds the real
+one.
+
 ## The Lawn counts the blades
 
-A Mower used to say how much it had cut and the Lawn relayed the number. Any
-number would do, so the board was a list of whatever each client typed. The
-Lawn now counts the blades itself, in the same loop that cuts them: it already
-walks every Tile of the swath, and it already knows the Blade Height of a Tile
-from `mownAt` and the Growth Rate. A position report carries no tally any
-more, so there is nothing left to forge.
+A position report used to carry the score of the Mower that sent it, and the
+server passed it on. A rewritten client therefore had whatever score it liked,
+and one wrote seven hundred million on the board.
 
-This costs a Mower nothing it did not already pay. The swath the Lawn counts
-is the swath the Lawn cut, which is the swath the travel budget allowed. A
-client sending a Mow Stroke every millisecond therefore scores *less* than a
-thumb on a phone, not more: it spends the same travel and wastes it on strokes
-that go nowhere.
+The server counts instead. It already works out every Tile a Mow Stroke cuts,
+and it holds the moment each Tile was last mown and the Growth Rate of that
+Tile, so it knows the Blade Height it is about to take off. It adds that up
+per Mower and puts its own number in the report. A client is not asked.
 
-Only grass in a Field counts. The paths and the verges between the Fields are
-not grass and the client does not draw them as grass, so `fieldAt` is mirrored
-in `src/index.ts` from `public/fields.js`, the way the mow maths and the
-Growth Rate already are. All three must stay identical.
+This costs a second copy of two functions the client already has: `fieldAt`,
+for the Tiles that are path and verge and grow nothing, and the Blade Height
+curve. They sit beside the Growth Rate table, which was already a copy for the
+same reason. All of them must stay identical to `public/index.html` and
+`public/fields.js`, or the two sides count different grass.
+
+There is one number, and the Lawn owns it. There used to be two: the count of
+one visit, which the Lawn could vouch for, and a headline score kept by the
+browser across visits, which it could not. The second was the one on the
+screen, so the screen showed the one number a rewritten client could still
+invent. The Mower Key below is what closed that: the Lawn now adds every visit
+to the same Score, so nothing about a score is kept in the browser at all.
 
 The client still counts along, so the digits roll without waiting for a round
-trip, and the Lawn overwrites that guess four times a second with `{t:"score"}`.
-It is the bargain the Snapshot already makes for the Tiles: mow first, and be
-put right.
+trip, and the Lawn overwrites that guess four times a second with
+`{t:"score"}`. It is the bargain the Snapshot already makes for the Tiles: mow
+first, and be put right.
 
 ## A Score needs a name to belong to
 
@@ -126,43 +220,39 @@ no Score, gets a fresh Key, and loses nothing by it.
 The Key is not the `id` a Mower is seen by. That stays one per socket, so two
 tabs of one browser are still two Mowers on the screen.
 
-One Score can only ever be fed by one travel budget, because both hang on the
-Key. Ten tabs on one Key cut what one Mower cuts: measured, one tab is let
-through at 12 Tiles a second and ten tabs at 18 between them, which is the
-refill rate plus the bank draining once. Eleven tabs would be the same.
-
-A tab that brings no Key gets a Key of its own, and so a budget of its own —
-but it gets a Score of its own with it, so nothing is concentrated. That is
-the whole shape of it: opening windows can only ever make more Mowers, never a
-faster one.
+The travel budget hangs on the Key too, and that is what bounds a Score. One
+Score can only ever be fed by one budget, so ten tabs on one Key cut what one
+Mower cuts: measured, one tab is let through at 12 Tiles a second and ten tabs
+at 18 between them, which is the refill rate plus the bank draining once.
+Eleven tabs would be the same. A tab that brings no Key gets a budget of its
+own, but a Score of its own with it, so nothing is concentrated — opening
+windows can only ever make more Mowers, never a faster one. `seed` still
+empties that budget when a socket arrives, so reconnecting cannot refill the
+bank.
 
 Two honest tabs pay for this, and that was chosen with open eyes. They share
 one pair of hands: each drives at about three quarters of the speed of a lone
-Mower and sees the odd resync. A second tab is rare; a second tab used to farm
-is what this is for.
+Mower and sees the odd resync.
 
-Unlike a position, a Score is written down: it is saved with the Tiles, on the
+A Score is written down, unlike a position: it is saved with the Tiles, on the
 same debounced alarm. To keep the state of the Lawn bounded the way the Tiles
 are, the Lawn keeps `SCORE_KEEP` Scores and forgets the lowest — never one of a
 Mower that is driving, so nobody loses a Score while they are earning it.
 
-## The score is a sum, so it must never take a NaN
+## Who is on the Lawn
 
-The score adds one Blade Height for each Tile the Mower cuts. A sum has no
-memory of its parts: one addend that is not a number makes every later score
-NaN, for as long as the sum stands. On the Lawn that sum now outlives the
-page, so one bad addend would follow a Mower between visits.
+The heading over the board and the board itself must count the same Mowers,
+and they did not. The board is built from presence: a Mower that has not
+reported for `PEER_TIMEOUT` drops off it. The heading came from the server,
+which counted sockets. A socket is not a Mower — a tab that is put in the
+background stops reporting while its socket stays open, and a socket that
+died without saying so is counted for ten minutes and more. Five sockets and
+two Mowers on the board was the normal reading of that, not a fault.
 
-The same three gates stop this on both sides. `heightAt` on the client and
-`bladeHeight` on the Lawn answer 0 for a Tile they cannot date, instead of
-NaN. Only a Blade Height above zero is added. And `updateScore` refuses a
-score that is not a finite number, so nothing that is not a number reaches the
-screen. The board reads the score of another Mower the same way, because `??`
-passes a NaN through and only catches a null.
-
-Nothing about the score is kept in the browser any more. A score in
-`localStorage` is a score the visitor can write, and the Lawn holds the real
-one.
+The heading now counts what the board counts: the Mowers that have spoken,
+and you. The server still says how many sockets it holds, in the hello and in
+a `mowers` message, because that is the honest answer to a different question
+and it is what the address count is made of. Nothing on the screen uses it.
 
 ## Agreement between client and server
 

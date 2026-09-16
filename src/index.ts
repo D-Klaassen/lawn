@@ -69,25 +69,45 @@ function regrowTable(width: number, height: number): Float32Array {
   return table;
 }
 
-const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
-/** Radius of one Mow Stroke, in Tiles. */
-const MOW_RADIUS = 2.6;
-
 /**
- * Which Field a Tile belongs to, or -1 for the paths and verges between them.
- * Only grass in a Field is worth a blade, so the Lawn needs the same answer
- * the client draws with. Mirrors `fieldAt` in `public/fields.js` exactly.
+ * Which Field a point belongs to, or -1 for the paths and the verge. It is
+ * the same function as `fieldAt` in `public/fields.js` and must stay so: the
+ * two sides have to agree on which Tiles are grass, or a score counts blades
+ * that were never there. Mirrors the client exactly.
  */
-function fieldAt(x: number, y: number): number {
-  if (x < 0 || y < 0 || x >= LAWN_WIDTH || y >= LAWN_HEIGHT) return -1;
-  const across = LAWN_HEIGHT * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13);
-  const along = LAWN_WIDTH * 0.52 + 9 * Math.sin(y * 0.065 + 0.7);
-  const branch = LAWN_HEIGHT * 0.22 + 5 * Math.sin(x * 0.07 + 1.8);
+function fieldAt(x: number, y: number, width: number, height: number): number {
+  if (x < 0 || y < 0 || x >= width || y >= height) return -1;
+  const across = height * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13);
+  const along = width * 0.52 + 9 * Math.sin(y * 0.065 + 0.7);
+  const branch = height * 0.22 + 5 * Math.sin(x * 0.07 + 1.8);
   const verge = 2.1 + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   if (Math.min(Math.abs(y - across), Math.abs(x - along), Math.abs(y - branch)) <= verge) return -1;
   const row = y < branch ? 0 : y < across ? 1 : 2;
   return row * 2 + (x < along ? 0 : 1);
 }
+
+/** Grass grows on a Field. Nothing grows on a path or a verge. */
+function onGrass(x: number, y: number): boolean {
+  return fieldAt(x, y, LAWN_WIDTH, LAWN_HEIGHT) >= 0;
+}
+
+const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
+
+/**
+ * How tall the grass on a Tile stands, from 0 to 1. A Tile nobody ever mowed
+ * is fully overgrown. Mirrors `heightAt` in the client, which is what makes
+ * the score the server counts the same score the Mower watches.
+ */
+function bladeHeight(mownAt: number, regrow: number, now: number): number {
+  const age = mownAt === 0 ? regrow : now - mownAt;
+  if (age >= regrow) return 1;
+  if (!(age > 0) || !(regrow > 0)) return 0;
+  const t = age / regrow;
+  return 1 - (1 - t) * (1 - t);
+}
+/** Radius of one Mow Stroke, in Tiles. */
+const MOW_RADIUS = 2.6;
+
 
 /**
  * Fastest a Mower drives, in Tiles per second. It mirrors `MAX_V` in the
@@ -124,6 +144,13 @@ const RESYNC_GAP_MS = 1000;
 const POS_RATE = 30;
 /** Emotes one Mower may send per second. */
 const EMOTE_RATE = 2;
+/**
+ * Mowers one address may have on the Lawn at once. Every socket earns its own
+ * travel, so one person with many sockets cuts what many visitors cut. This
+ * is the only thing that tells them apart, and it is a blunt one: a house, an
+ * office and a whole mobile network each look like one address.
+ */
+const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
@@ -152,8 +179,10 @@ const SCORE_GAP_MS = 250;
  */
 type ClientMessage =
   | { t: "mow"; x: number; y: number; x1?: number; y1?: number }
-  /** Where a Mower is and which way it points. How much it has cut is not
-   * its own to say: the Lawn counts that. */
+  /**
+   * Where a Mower is and which way it points. It no longer says how much it
+   * has cut: the Lawn counts that itself.
+   */
   | { t: "pos"; x: number; y: number; a: number }
   /** Which Emote a Mower shows. Relayed, never stored. */
   | { t: "emote"; e: number };
@@ -187,17 +216,18 @@ export class Lawn extends DurableObject {
    */
   private places = new WeakMap<WebSocket, Place>();
   /**
-   * How much travel each Mower has left, by Mower Key and not by socket. Ten
-   * tabs on one Key therefore drive one Mower's worth between them, so a
-   * Score cannot be farmed by opening windows. Two honest tabs pay the same
-   * price, which is the point: what they share is one pair of hands.
+   * How much travel each Mower has left, by Mower Key and not by socket.
+   * Windows are free and hands are not, so ten tabs on one Key drive one
+   * Mower's worth between them and a Score cannot be farmed by opening
+   * windows. Two honest tabs pay the same price: what they share is one pair
+   * of hands.
    */
   private travelBudgets = new Map<string, Budget>();
   /**
    * How many blades each Mower has cut, by Mower Key. The Lawn counts them as
    * it cuts them, so the tally is not a number a client can name. Unlike a
-   * position it survives hibernation, because a score is worth nothing that
-   * does not outlive the drive that earned it.
+   * position it outlives the socket, because a Score is worth nothing that
+   * does not outlive the visit that earned it.
    */
   private scores!: Map<string, number>;
   private scoredAt = new WeakMap<WebSocket, number>();
@@ -241,20 +271,29 @@ export class Lawn extends DurableObject {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
+    // The address is a tag on the socket, not a note in memory: the Lawn can
+    // then count the Mowers of one address with an index, and the count stays
+    // right when the Lawn hibernates. Cloudflare writes this header itself, so
+    // a client cannot claim another address.
+    const address = request.headers.get("CF-Connecting-IP") ?? "";
+    if (address && this.mowersAt(address) >= MOWERS_PER_ADDRESS) {
+      return new Response("too many mowers from here", { status: 429 });
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
 
     // Hibernation: the Lawn sleeps between Mow Strokes and the sockets survive.
     // The id rides on the socket, so it survives hibernation too.
     const id = crypto.randomUUID().slice(0, 8);
-    // The Mower Key says whose tally this is. The Lawn is the only thing that
+    // The Mower Key says whose Score this is. The Lawn is the only thing that
     // ever makes one, and it takes one back only when it already holds a
-    // tally under it, so a Mower cannot name itself into someone else's
-    // score. A Mower that has never cut a blade has no tally and simply gets
-    // a new Key, which costs it nothing.
+    // Score under it, so a Mower cannot name itself into the Score of
+    // another. A Mower that has never cut a blade has no Score and simply
+    // gets a new Key, which costs it nothing.
     const given = new URL(request.url).searchParams.get("m");
     const key = given && this.scores.has(given) ? given : crypto.randomUUID();
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, address ? [address] : []);
     server.serializeAttachment({ id, key });
     server.send(JSON.stringify(this.hello(id, key)));
     server.send(this.snapshot());
@@ -336,7 +375,7 @@ export class Lawn extends DurableObject {
     if (!from) {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
-      this.places.set(ws, { x, y });
+      this.seed(ws, purse, x, y);
       return;
     }
 
@@ -414,9 +453,9 @@ export class Lawn extends DurableObject {
   }
 
   /**
-   * Forget the lowest tallies once the Lawn holds more than it keeps. A Mower
+   * Forget the lowest Scores once the Lawn holds more than it keeps. A Mower
    * that is driving is never forgotten, whatever it has cut, so nobody loses a
-   * score while they are earning it.
+   * Score while they are earning it.
    */
   private prune(): void {
     if (this.scores.size <= SCORE_KEEP) return;
@@ -434,25 +473,9 @@ export class Lawn extends DurableObject {
   }
 
   /**
-   * Blade Height of a Tile, 0 to 1. Mirrors `heightAt` in the client exactly,
-   * down to the answer of 0 for a Tile it cannot date: a Blade Height that is
-   * not a number would make a sum that is not a number, for ever.
-   */
-  private bladeHeight(i: number, now: number): number {
-    const mown = this.mownAt[i];
-    if (mown === 0) return 1;
-    const regrow = REGROW[i];
-    const age = now - mown;
-    if (age >= regrow) return 1;
-    if (!(age > 0) || !(regrow > 0)) return 0;
-    const t = age / regrow;
-    return 1 - (1 - t) * (1 - t);
-  }
-
-  /**
-   * Cut every Tile the swath touches back to zero Blade Height, and answer how
-   * much grass stood there. Only a Tile in a Field counts: the paths and the
-   * verges are not grass, and the client does not draw them as grass either.
+   * Cut every Tile the swath touches back to zero Blade Height, and answer
+   * with the grass that came off. That number is the Score: the Lawn counts
+   * the blades itself, so a Mower cannot name its own tally.
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
@@ -475,10 +498,7 @@ export class Lawn extends DurableObject {
         const oy = py - t * dy;
         if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
           const i = y * LAWN_WIDTH + x;
-          if (fieldAt(x + 0.5, y + 0.5) >= 0) {
-            const height = this.bladeHeight(i, now);
-            if (height > 0) blades += height;
-          }
+          if (onGrass(x + 0.5, y + 0.5)) blades += bladeHeight(this.mownAt[i], REGROW[i], now);
           this.mownAt[i] = now;
         }
       }
@@ -553,6 +573,25 @@ export class Lawn extends DurableObject {
     void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
   }
 
+
+  /** How many Mowers one address has on the Lawn now. */
+  private mowersAt(address: string): number {
+    return this.ctx
+      .getWebSockets(address)
+      .filter((ws) => ws.readyState === WebSocket.READY_STATE_OPEN).length;
+  }
+
+  /**
+   * Put a Mower on the Lawn where it says it is, with no travel banked. A
+   * fresh socket must earn its travel exactly like the Mower before it:
+   * without this a Mower could reconnect for a full bank, cut a long swath at
+   * once, drop the socket and come straight back for another.
+   */
+  private seed(ws: WebSocket, purse: string, x: number, y: number): void {
+    this.places.set(ws, { x, y });
+    this.travelBudgets.set(purse, { tokens: 0, refilledAt: Date.now() });
+  }
+
   /**
    * Move a Mower from where the Lawn holds it towards where it says it is,
    * and no further than its travel allows. The answer is the far end of the
@@ -583,7 +622,7 @@ export class Lawn extends DurableObject {
   private within(ws: WebSocket, purse: string, x: number, y: number): Place {
     const place = this.places.get(ws);
     if (!place) {
-      this.places.set(ws, { x, y });
+      this.seed(ws, purse, x, y);
       return { x, y };
     }
     const dx = x - place.x;
