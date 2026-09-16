@@ -209,7 +209,14 @@ function showMowerCount(count) {
 const PATCH = 90;        // tiles of grass generated around the camera target
 const CELL3 = 0.28;      // blade spacing in tiles
 const SEGS = 4;          // segments along one blade
-const SAMPLES = 1;       // Broad WebGPU support and the lowest 4K fill cost.
+/**
+ * A blade of grass is one or two pixels wide, which is exactly the geometry
+ * that breaks up without multisampling: the blades come apart into speckles
+ * that crawl as the Mower drives. Four samples is the count every WebGPU
+ * adapter must support, and it costs about 1.3 ms a frame here — far less
+ * than the density it replaces.
+ */
+const SAMPLES = 4;
 const MOWER_SCALE = 2.6; // the deck should about match the cut width
 const SHADOW_SIZE = 1536;
 /** Texels per Tile and Tiles of margin in the ground bake. Mirrors the shader. */
@@ -1513,13 +1520,14 @@ initField().then((f) => (F = f)).catch((e) => {
 
 /**
  * The field's pixel density: dynamic resolution, the way consoles hold a
- * frame rate. A retina screen gets up to 1.35 device pixels per CSS pixel.
- * When the GPU cannot hold the display's rate the field gives density back,
- * one step a second, down to one device pixel per CSS pixel, which is what
- * every ordinary screen gets anyway. It takes the density back the same way
- * once there is room. The HUD is its own canvas and stays crisp throughout.
+ * frame rate. It never draws more pixels than the screen has, because
+ * multisampling now cleans the blade edges and the extra pixels bought
+ * little for 4 ms a frame — and asking for them put the frame on the edge of
+ * the display's interval, where the density would rise, miss, and fall back
+ * in a visible pulse. On a screen too large to hold the rate the field draws
+ * fewer pixels instead. The HUD is its own canvas and stays crisp.
  */
-const FIELD_SCALE_MAX = 1.35, FIELD_SCALE_MIN = 1;
+const FIELD_SCALE_MAX = 1, FIELD_SCALE_MIN = 0.7;
 let fieldScale = FIELD_SCALE_MAX, tunedAt = 0, refresh = Infinity, goodSeconds = 0;
 let gapTotal = 0, gapCount = 0;
 

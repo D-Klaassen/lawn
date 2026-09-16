@@ -104,15 +104,24 @@ The still parts of the ground — verge, lawn edge and the two coarse noises —
 are baked into one texture the first time the Lawn says how big it is. Only
 the finest grain is still worked out per pixel.
 
-What remains is fill rate, so the field draws at a density it can hold. It
-asks for 1.35 device pixels per CSS pixel and gives a step back whenever the
-mean frame gap of the last second misses the display's own interval, down to
-one device pixel per CSS pixel. It takes a step back only after three good
-seconds, so a moment of load does not start the resolution swinging. The
-measure must be the mean and not the median: with vsync every gap is a
-multiple of the interval, so a screen that misses every second frame still
-has a median of exactly one interval and reads as healthy. The HUD is a
-separate canvas and stays sharp throughout.
+What remains is fill rate. A blade is one or two pixels wide, so the field
+multisamples with four samples: without it the blades come apart into
+speckles that crawl as the Mower drives. Four is the count every WebGPU
+adapter must support, and it costs about 1.3 ms a frame.
+
+Density is then dynamic, the way consoles hold a frame rate, but it never
+goes above one device pixel per CSS pixel. Drawing more pixels than the
+screen has was tried and dropped: with multisampling it changes almost
+nothing that can be seen, it costs 4 ms, and it put the frame on the edge of
+the display's interval, where the density rose, missed, and fell back in a
+visible pulse. On a screen too large to hold the rate the field draws fewer
+pixels instead, down to 0.7, a step at a time, and takes a step back only
+after three good seconds.
+
+The measure must be the mean frame gap and not the median: with vsync every
+gap is a multiple of the display's interval, so a screen that misses every
+second frame still has a median of exactly one interval and reads as
+healthy. The HUD is a separate canvas and stays sharp throughout.
 
 ## Generated geometry
 
