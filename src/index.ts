@@ -205,6 +205,13 @@ type ClientMessage =
    * has cut: the Lawn counts that itself.
    */
   | { t: "pos"; x: number; y: number; a: number }
+  /**
+   * Which Mower Key this one holds, or none. It is the first thing a Mower
+   * says. The Key travels in a message and never in the address of the
+   * socket: an address is written down by every machine it passes, and the
+   * Key is the whole of the proof of who a Mower is.
+   */
+  | { t: "i"; k?: string }
   /** Which Emote a Mower shows. Relayed, never stored. */
   | { t: "emote"; e: number }
   /**
@@ -213,6 +220,27 @@ type ClientMessage =
    * another Mower, it can only say that it is dazed.
    */
   | { t: "bump" };
+
+/**
+ * What the Lawn keeps under one Mower Key: what that Mower is called, and the
+ * blades it has cut.
+ *
+ * The name seed is not the `id`. An `id` is one per socket, so two tabs of one
+ * browser stay two Mowers on the screen and neither writes over the other on
+ * the board. The name seed is one per Key, so those two Mowers wear the same
+ * name and the same colour, and so does the Mower that comes back tomorrow.
+ */
+interface Score {
+  /** What it is called and coloured by. */
+  n: string;
+  /** Its blades. */
+  c: number;
+}
+
+/** A short random string. Both an id and a name seed are one of these. */
+function mowerId(): string {
+  return crypto.randomUUID().slice(0, 8);
+}
 
 interface Budget {
   tokens: number;
@@ -257,7 +285,7 @@ export class Lawn extends DurableObject {
    * position it outlives the socket, because a Score is worth nothing that
    * does not outlive the visit that earned it.
    */
-  private scores!: Map<string, number>;
+  private scores!: Map<string, Score>;
   private scoredAt = new WeakMap<WebSocket, number>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -290,8 +318,15 @@ export class Lawn extends DurableObject {
         this.schedulePersist();
       }
       this.strokes = (await ctx.storage.get<number>(STROKE_KEY)) ?? 0;
-      const scores = await ctx.storage.get<[string, number][]>(SCORE_KEY);
-      this.scores = new Map(Array.isArray(scores) ? scores : []);
+      // A Score used to be a bare number. One written before the id was kept
+      // gets an id here, so an old Mower Key still opens the Score it holds.
+      const scores = await ctx.storage.get<[string, Score | number][]>(SCORE_KEY);
+      this.scores = new Map(
+        (Array.isArray(scores) ? scores : []).map(([key, held]) => [
+          key,
+          typeof held === "number" ? { n: mowerId(), c: held } : held,
+        ]),
+      );
     });
   }
 
@@ -312,18 +347,13 @@ export class Lawn extends DurableObject {
     const [client, server] = [pair[0], pair[1]];
 
     // Hibernation: the Lawn sleeps between Mow Strokes and the sockets survive.
-    // The id rides on the socket, so it survives hibernation too.
-    const id = crypto.randomUUID().slice(0, 8);
-    // The Mower Key says whose Score this is. The Lawn is the only thing that
-    // ever makes one, and it takes one back only when it already holds a
-    // Score under it, so a Mower cannot name itself into the Score of
-    // another. A Mower that has never cut a blade has no Score and simply
-    // gets a new Key, which costs it nothing.
-    const given = new URL(request.url).searchParams.get("m");
-    const key = given && this.scores.has(given) ? given : crypto.randomUUID();
+    // The id rides on the socket, so it survives hibernation too. This one
+    // lasts until the Mower says which Key it holds, which is the first thing
+    // it says.
+    const id = mowerId();
     this.ctx.acceptWebSocket(server, address ? [address] : []);
-    server.serializeAttachment({ id, key });
-    server.send(JSON.stringify(this.hello(id, key)));
+    server.serializeAttachment({ id, key: "" });
+    server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
     this.announceMowers();
 
@@ -339,12 +369,21 @@ export class Lawn extends DurableObject {
     } catch {
       return;
     }
-    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    if (message?.t === "i") {
+      this.claim(ws, message.k);
+      return;
+    }
+    const who = ws.deserializeAttachment() as
+      | { id?: string; key?: string; name?: string }
+      | null;
     const id = who?.id ?? "?";
     const key = who?.key ?? "";
-    // What the travel budget is held under. A socket opened before Keys
-    // existed has none, and drives on its own id rather than sharing an
-    // empty purse with every other such socket.
+    // What this Mower is called and coloured by. A socket that has not said
+    // which Key it holds wears its own id, as every Mower did before Keys.
+    const name = who?.name || id;
+    // What the travel budget is held under. A socket that has not said which
+    // Key it holds drives on its own id rather than sharing an empty purse
+    // with every other such socket.
     const purse = key || id;
 
     if (message?.t === "pos") {
@@ -361,12 +400,14 @@ export class Lawn extends DurableObject {
       const seen = this.within(ws, purse, x, y);
       // The score is what the Lawn counted, not what the report says. A
       // report carries no tally any more, so there is nothing to forge.
-      const s = Math.round(this.scores.get(key) ?? 0);
+      const s = Math.round(this.scores.get(key)?.c ?? 0);
       // Stamp the report. A client draws other Mowers slightly in the past,
       // between two reports, and it needs to know when each one was really
       // made: the gaps between arrivals are network jitter, not movement.
       this.broadcast(
-        JSON.stringify({ t: "peer", id, x: seen.x, y: seen.y, a, s, n: Date.now() }),
+        // `nm` is what this Mower is called and coloured by, and `n` is when
+        // the report was made. They are different things with unlucky names.
+        JSON.stringify({ t: "peer", id, nm: name, x: seen.x, y: seen.y, a, s, n: Date.now() }),
         ws,
       );
       // A position goes out whether or not the Mower moves, so this is what
@@ -425,7 +466,10 @@ export class Lawn extends DurableObject {
     // The Lawn counts the blades as it cuts them. This is the whole tally:
     // no client adds anything to it and no client is asked what it is.
     const blades = this.mow(from.x, from.y, to.x, to.y);
-    if (blades > 0 && key) this.scores.set(key, (this.scores.get(key) ?? 0) + blades);
+    if (blades > 0 && key) {
+      const held = this.scores.get(key);
+      this.scores.set(key, { n: held?.n ?? name, c: (held?.c ?? 0) + blades });
+    }
     this.strokes += 1;
     this.broadcast(
       JSON.stringify({
@@ -501,7 +545,7 @@ export class Lawn extends DurableObject {
     }
     const spare = [...this.scores]
       .filter(([key]) => !driving.has(key))
-      .sort((a, b) => a[1] - b[1]);
+      .sort((a, b) => a[1].c - b[1].c);
     for (const [key] of spare.slice(0, this.scores.size - SCORE_KEEP)) {
       this.scores.delete(key);
     }
@@ -568,14 +612,39 @@ export class Lawn extends DurableObject {
     }
   }
 
-  private hello(id: string, key: string) {
+  /**
+   * Take the Mower Key a Mower says it holds, and answer with who that makes
+   * it. The Lawn takes a Key back only when it already holds a Score under it,
+   * so a Mower cannot name itself into the Score of another; one the Lawn has
+   * never issued simply becomes a new Mower, which costs it nothing.
+   *
+   * A socket does this once. The name it was given when it opened is replaced
+   * by the name that belongs to the Key, so a Mower is the same Mower, with
+   * the same colour, on every visit.
+   */
+  private claim(ws: WebSocket, given?: unknown): void {
+    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    if (who?.key) return;
+
+    const held = typeof given === "string" ? this.scores.get(given) : undefined;
+    const key = held ? (given as string) : crypto.randomUUID();
+    // The id stays the one this socket opened with. Only the name and the
+    // colour come from the Key, so a Mower is recognisable across visits
+    // without two of its tabs becoming one Mower.
+    const id = who?.id ?? mowerId();
+    const name = held?.n ?? mowerId();
+    ws.serializeAttachment({ id, key, name });
+    try {
+      ws.send(JSON.stringify({ t: "you", id, key, nm: name, s: Math.round(held?.c ?? 0) }));
+    } catch {
+      /* socket is going away */
+    }
+  }
+
+  private hello(id: string) {
     return {
       t: "hello",
       id,
-      /** The Mower Key, to give back on the next visit. */
-      key,
-      /** The tally the Lawn holds under that Key. */
-      s: Math.round(this.scores.get(key) ?? 0),
       w: LAWN_WIDTH,
       h: LAWN_HEIGHT,
       regrowMin: REGROW_MIN_SECONDS,

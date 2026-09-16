@@ -400,6 +400,8 @@ const STUN_SPEED = 6;
  */
 const STUN_GRACE_MS = 3000;
 let myId = "";
+/** What this Mower is called and coloured by. It follows the Mower Key. */
+let myName = "";
 /** Your own paint. It comes from your id, so every screen agrees on it. */
 let myHue = 80;
 
@@ -599,15 +601,19 @@ function connect() {
   reconnecting = false;
   const url = new URL("/lawn", location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const key = mowerKey();
-  if (key) url.searchParams.set("m", key);
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   socket = ws;
 
   ws.addEventListener("open", () => {
     if (ws !== socket) { ws.close(); return; }
-    connected = true; retry = 500;
+    retry = 500;
+    // Say which Mower Key this browser holds, and say it in a message. A Key
+    // in the address of the socket is written down by every machine between
+    // here and the Lawn, and the Key is the whole of the proof of who a Mower
+    // is. Nothing else is sent until the Lawn has answered, so no Mow Stroke
+    // is ever counted under the wrong Mower.
+    ws.send(JSON.stringify({ t: "i", k: mowerKey() }));
   });
   ws.addEventListener("message", (e) => {
     if (ws !== socket) return;
@@ -626,9 +632,23 @@ function connect() {
       return;
     }
     const m = JSON.parse(e.data);
-    if (m.t === "hello") {
+    if (m.t === "you") {
+      // The Lawn has said which Mower this is, and what it has cut. The Lawn
+      // counted these blades — this visit and every visit before it, under one
+      // Mower Key — so there is no second tally for the board to show.
       myId = m.id;
-      myHue = hueOf(myId);
+      // The name and the colour come from the Mower Key, so they are the same
+      // on every visit. The id is still one per socket, so two tabs of one
+      // browser stay two Mowers.
+      myName = m.nm || m.id;
+      myHue = hueOf(myName);
+      rememberKey(m.key);
+      bladesCut = Number.isFinite(m.s) && m.s >= 0 ? m.s : 0;
+      landScore(bladesCut);
+      connected = true;
+      return;
+    }
+    if (m.t === "hello") {
       W = m.w; H = m.h; RADIUS = m.radius;
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
@@ -636,17 +656,14 @@ function connect() {
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes;
-      // The Lawn counted these blades, so they are the score — this visit and
-      // every visit before it, under one Mower Key. There is no second tally
-      // for the board to show, because this one is already the Lawn's.
-      rememberKey(m.key);
-      bladesCut = Number.isFinite(m.s) && m.s >= 0 ? m.s : 0;
-      landScore(bladesCut);
     } else if (m.t === "mow") {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
       strokes = m.strokes;
     } else if (m.t === "peer") {
-      const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(m.id), buf: [] };
+      const seed = m.nm || m.id;
+      const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(seed), buf: [] };
+      p.name = nameOf(seed);
+      p.hue = hueOf(seed);
       p.score = Number.isFinite(m.s) ? m.s : 0;
       p.seen = performance.now();
       // Keep the report on the shared clock, the same one the Tiles use.
@@ -795,9 +812,9 @@ function refreshBoard() {
   const now = performance.now();
   const rows = [];
   for (const [id, p] of peers) {
-    if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: nameOf(id), score: p.score ?? 0, mine: false });
+    if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: p.name ?? nameOf(id), score: p.score ?? 0, mine: false });
   }
-  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(bladesCut), mine: true });
+  rows.push({ name: myName ? nameOf(myName) : "You", score: Math.round(bladesCut), mine: true });
   rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   boardList.replaceChildren(...rows.map((r) => {
     const li = document.createElement("li");
