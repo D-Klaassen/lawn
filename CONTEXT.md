@@ -11,6 +11,9 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   (fully overgrown).
 - **Mow Stroke** — the swath between two pointer positions. The Mower cuts a
   capsule with radius `MOW_RADIUS` around that line.
+- **Report** — the one message a Mower sends about itself: where it is and
+  which way it points. It is the Mow Stroke and the position at once, because
+  both say the same thing about the same movement. See "What a report costs".
 - **Mower** — one connected visitor.
 - **Bump** — two Mowers touch while they close on each other. A contact while
   both stand still, or while one only catches up with the other, is not a
@@ -70,11 +73,36 @@ change. It is a debounce, not a simulation step.
 
 ## Presence
 
-A Mower reports its position with `{t:"pos"}`. The server relays it and keeps
-nothing on disk, because a position has no meaning after the Mower leaves. A
-client forgets a Mower it has not heard from for 4 seconds. Hibernation
-therefore costs almost nothing: a Lawn that wakes has forgotten where each
-Mower stands, and the next Mow Stroke says it again.
+A Mow Stroke says which way the Mower points, so it is the position report as
+well. The server relays it and keeps nothing on disk, because a position has
+no meaning after the Mower leaves. A client forgets a Mower it has not heard
+from for 4 seconds. Hibernation therefore costs almost nothing: a Lawn that
+wakes has forgotten where each Mower stands, and the next Mow Stroke says it
+again.
+
+`{t:"pos"}` is the older message that carried a position on its own. The
+server still takes it, because a tab open across a deploy keeps sending it.
+Nothing writes it any more.
+
+## What a report costs
+
+Cloudflare counts 20 incoming WebSocket messages as one request, and every
+alarm as one more. The Workers Free plan allows 100,000 requests a day and
+100,000 rows written a day, and one write of the Lawn is 4 rows. The whole
+world shares them. What a Mower sends is therefore a budget, not a free
+choice:
+
+- **One report, not two.** A Mow Stroke and a position say the same thing
+  about the same movement. They were two messages and are now one.
+- **A report every 100 ms.** The swath the Lawn cuts between two reports is a
+  straight one, about 1.3 Tiles long against a Mower 5 Tiles wide, so the
+  grass still comes off where the Mower drove. Your own Lawn is cut every
+  frame, so nothing about the driving reads slower.
+- **A Mower that stands still says so every 500 ms.** A report that repeats
+  the last one is news to nobody and still costs the Lawn. It cannot stop
+  altogether: a client forgets a Mower it has not heard from for 4 seconds.
+Together these are about a third of what a Mower used to cost while it
+drives, and a twentieth while it stands still.
 
 ## A Bump dazes both Mowers
 
@@ -178,12 +206,13 @@ Tiles of swath to anyone who opened a socket, cut, dropped it and came back,
 which is quicker than driving: 24 sockets cut 84 Tiles a second that way. An
 empty budget makes a reconnection worth 1 Tile a second, and costs an honest
 Mower nothing, because its first Mow Stroke only marks where it starts and its
-second comes 40 ms later, by which time it has earned the 0.5 Tiles it needs.
+second comes 100 ms later, by which time it has earned 1.5 Tiles and needs
+1.3.
 
 A client that is rewritten thus gets no advantage. It can send a Mow Stroke
 every millisecond and still cuts 13 Tiles a second, the same as a thumb on a
-phone. A reported position is also pulled back to within reach of the last Mow
-Stroke, so each Mower is seen where it mows.
+phone. A Mower is shown to the others where the Lawn drove it to, which is
+within that same budget, so each Mower is seen where it mows.
 
 The budget is held under the Mower Key, not under the socket. Windows are free
 and hands are not, so the thing that may only be spent once has to belong to
@@ -363,9 +392,9 @@ the Mower is over its travel budget. Then the two lawns disagree. To correct
 this, the server sends a new Snapshot to that Mower. Keep the mow maths in
 `src/index.ts` and `public/index.html` identical.
 
-The client sends a maximum of one Mow Stroke per frame. The Mow Stroke covers
-the full movement since the last one. A fast drag thus cuts a continuous
-swath with few messages.
+The client sends a maximum of one Mow Stroke every 100 ms. The Mow Stroke
+covers the full movement since the last one. A fast drag thus cuts a
+continuous swath with few messages. See "What a report costs".
 
 ## Driving with a thumb
 

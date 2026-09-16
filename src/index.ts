@@ -145,13 +145,17 @@ const TRAVEL_BANK_SECONDS = 1;
 const TRAVEL_RATE = MAX_SPEED * SPEED_TOLERANCE;
 const TRAVEL_BANK = TRAVEL_RATE * TRAVEL_BANK_SECONDS;
 /**
- * How far in front of its own last Mow Stroke a Mower may report itself. A
- * Mow Stroke goes out every 40 ms and a position every 80 ms, so a position
- * leads the Lawn by at most one frame of driving.
+ * How far in front of its own last Mow Stroke a Mower may report itself. It
+ * holds for the older `pos` message only: a Mow Stroke now carries the
+ * heading, and a Mower is shown where the Lawn drove it to.
  */
 const POSITION_SLACK = 2;
 
-/** Mow Strokes one Mower may send per second. */
+/**
+ * Mow Strokes one Mower may send per second. A Mower sends about ten, and the
+ * room above that is for a tab open across a deploy: that one still sends a
+ * Mow Stroke every 40 ms, and it must not be throttled for it.
+ */
 const STROKE_RATE = 40;
 /** Shortest gap between two resyncs to the same Mower. */
 const RESYNC_GAP_MS = 1000;
@@ -193,16 +197,18 @@ const SCORE_KEEP = 200;
 const SCORE_GAP_MS = 250;
 
 /**
- * A Mow Stroke says where the Mower is now. The swath is from where the Lawn
- * last saw that Mower to there, so the Mower cannot name its own starting
- * point. `x1`/`y1` is the old name for the same point, for a tab that was
- * open across a deploy.
+ * A Mow Stroke says where the Mower is now and which way it points. The swath
+ * is from where the Lawn last saw that Mower to there, so the Mower cannot
+ * name its own starting point. It is the position report as well, because
+ * both say the same thing about the same movement and a second message would
+ * cost the Lawn a second time. `x1`/`y1` is the old name for the same point,
+ * and a missing `a` the older shape, for a tab open across a deploy.
  */
 type ClientMessage =
-  | { t: "mow"; x: number; y: number; x1?: number; y1?: number }
+  | { t: "mow"; x: number; y: number; a?: number; x1?: number; y1?: number }
   /**
-   * Where a Mower is and which way it points. It no longer says how much it
-   * has cut: the Lawn counts that itself.
+   * Where a Mower is and which way it points. A Mow Stroke now carries this,
+   * so only a tab open across a deploy still sends it on its own.
    */
   | { t: "pos"; x: number; y: number; a: number }
   /**
@@ -400,19 +406,7 @@ export class Lawn extends DurableObject {
       const seen = this.within(ws, purse, x, y);
       // The score is what the Lawn counted, not what the report says. A
       // report carries no tally any more, so there is nothing to forge.
-      const s = Math.round(this.scores.get(key)?.c ?? 0);
-      // Stamp the report. A client draws other Mowers slightly in the past,
-      // between two reports, and it needs to know when each one was really
-      // made: the gaps between arrivals are network jitter, not movement.
-      this.broadcast(
-        // `nm` is what this Mower is called and coloured by, and `n` is when
-        // the report was made. They are different things with unlucky names.
-        JSON.stringify({ t: "peer", id, nm: name, x: seen.x, y: seen.y, a, s, n: Date.now() }),
-        ws,
-      );
-      // A position goes out whether or not the Mower moves, so this is what
-      // brings an optimistic tally back to the truth after the last stroke.
-      this.tell(ws, s);
+      this.report(ws, id, name, key, seen, a);
       return;
     }
     if (message?.t === "emote") {
@@ -439,6 +433,11 @@ export class Lawn extends DurableObject {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     if (x < -MOW_RADIUS || x > LAWN_WIDTH + MOW_RADIUS) return;
     if (y < -MOW_RADIUS || y > LAWN_HEIGHT + MOW_RADIUS) return;
+    // A Mow Stroke that carries a heading is a position report as well. A tab
+    // open across a deploy sends the two apart and carries none here, and is
+    // then shown by its own `pos` message exactly as before.
+    const a = Number(message.a);
+    const heading = Number.isFinite(a);
 
     // A Mower over budget gets the Lawn as the server sees it, so an optimistic
     // client never keeps a swath the server refused.
@@ -461,29 +460,62 @@ export class Lawn extends DurableObject {
     const to = this.drive(purse, from, x, y);
     this.places.set(ws, to);
     if (to.x !== x || to.y !== y) this.resync(ws);
-    if (to.x === from.x && to.y === from.y) return;
 
-    // The Lawn counts the blades as it cuts them. This is the whole tally:
-    // no client adds anything to it and no client is asked what it is.
-    const blades = this.mow(from.x, from.y, to.x, to.y);
-    if (blades > 0 && key) {
-      const held = this.scores.get(key);
-      this.scores.set(key, { n: held?.n ?? name, c: (held?.c ?? 0) + blades });
+    if (to.x !== from.x || to.y !== from.y) {
+      // The Lawn counts the blades as it cuts them. This is the whole tally:
+      // no client adds anything to it and no client is asked what it is.
+      const blades = this.mow(from.x, from.y, to.x, to.y);
+      if (blades > 0 && key) {
+        const held = this.scores.get(key);
+        this.scores.set(key, { n: held?.n ?? name, c: (held?.c ?? 0) + blades });
+      }
+      this.strokes += 1;
+      this.broadcast(
+        JSON.stringify({
+          t: "mow",
+          x0: from.x,
+          y0: from.y,
+          x1: to.x,
+          y1: to.y,
+          by: id,
+          strokes: this.strokes,
+        }),
+        ws,
+      );
+      this.schedulePersist();
     }
-    this.strokes += 1;
+
+    // A Mow Stroke that says which way the Mower points is the position
+    // report as well, because it is the same movement. The Mower is shown
+    // where the Lawn drove it to and not where the report said, so there is
+    // nothing to pull back: `within` is for the older `pos` message only.
+    if (heading) this.report(ws, id, name, key, to, a);
+  }
+
+  /**
+   * Show a Mower to the others, and tell it what it has really cut. Both come
+   * from one report, so the tally that goes out is the one the Mow Stroke in
+   * that same report just added to.
+   */
+  private report(
+    ws: WebSocket,
+    id: string,
+    name: string,
+    key: string,
+    at: Place,
+    a: number,
+  ): void {
+    const s = Math.round(this.scores.get(key)?.c ?? 0);
+    // Stamp the report. A client draws other Mowers slightly in the past,
+    // between two reports, and it needs to know when each one was really
+    // made: the gaps between arrivals are network jitter, not movement.
     this.broadcast(
-      JSON.stringify({
-        t: "mow",
-        x0: from.x,
-        y0: from.y,
-        x1: to.x,
-        y1: to.y,
-        by: id,
-        strokes: this.strokes,
-      }),
+      // `nm` is what this Mower is called and coloured by, and `n` is when
+      // the report was made. They are different things with unlucky names.
+      JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, s, n: Date.now() }),
       ws,
     );
-    this.schedulePersist();
+    this.tell(ws, s);
   }
 
   webSocketClose(ws: WebSocket): void {
