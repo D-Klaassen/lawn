@@ -755,18 +755,34 @@ the table lists them, because the window shows the earned rungs and then one
 more: a ladder out of order would hide the rung being climbed behind one
 already passed.
 
-The window is meant to be read at a glance and not scrolled, so everything in
-it is measured against that. A rung already climbed gives up its description
-and keeps its name — a tick over a line saying what it asked for is the line
-that pushes the rung you are on off the bottom. The nine take as many columns
-as the width allows, because one column is nine rows and nine rows is the whole
-of the room on a phone.
+Each Achievement is its own card — a dark inset behind a slim warm bevel, with
+its name across the head of it and a tile there saying whether it is won. A
+flat list reads as one long thing to get through; a card reads as a thing in
+its own right, which is what an Achievement is.
 
-Measured at the worst the window ever gets — three rungs climbed on two ladders
-and two on the third, which is thirteen rows — it comes to 542 px on a desktop
-and 566 px on a phone, inside the 608 and 601 they are given. It still scrolls
-on a window under about 700 px tall, and that is the honest limit of fitting
-twenty-two Achievements in one card.
+Cards cost height, and the window is meant to be read at a glance rather than
+scrolled, so everything in one is measured against that. A card already won is
+its head and nothing else: a tick over a line spelling out what it asked for is
+exactly the line that pushes the card you are working on off the bottom. The
+nine take as many columns as the width allows, because one column is nine rows
+and nine rows is the whole of the room on a phone.
+
+Measured, by how tall a window has to be before the window stops scrolling:
+
+| climbed on each ladder | cards | desktop | phone |
+| --- | --- | --- | --- |
+| none | 5 | 530 px | fits |
+| one | 8 | 645 px | fits |
+| two | 11 | 759 px | fits |
+| three | 13 | 780 px | fits |
+| all of them | 13 | 672 px | fits |
+
+The worst of it is three rungs climbed on two ladders and two on the third,
+which wants a desktop window 780 px tall. A phone fits every one of them. Below
+that a window scrolls, and that is the honest cost of twenty-two Achievements
+as twenty-two cards with every won one still standing. Showing only the highest
+rung climbed on each ladder would cap it at eight cards and fit anywhere; it is
+not done because a card you won is a card worth keeping on the shelf.
 
 What is earned is the mask and never what the client works out. The bar may
 reach its end a moment before the tick arrives, and that is the truth of it —
