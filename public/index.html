@@ -2279,23 +2279,29 @@ fn growBlade(ii : u32) -> BladeData {
   let density = lawnEdge(root) * verge;
   let patchCentre = (C.misc.yz + vec2f(C.misc.w * 0.5)) * cellSize;
   let patchEdge = C.misc.w * cellSize * 0.5 - max(abs(root.x - patchCentre.x), abs(root.y - patchCentre.y));
-  let onLawn = smoothstep(r.x * 0.55, r.x * 0.55 + 0.45, density)
-             * smoothstep(0.0, 6.0, patchEdge);
+  // Thin out roots at the verge without shrinking the surviving blades.
+  let present = select(0.0, 1.0, jitter.z < density);
+  let onLawn = present * smoothstep(0.0, 6.0, patchEdge);
   let time = C.misc.x;
 
   // Which way it points, and how far it leans over.
   let face = r.z * 6.2831853;
   let direction = mix(vec2f(cos(face), sin(face)), cutSmooth(root), (1.0 - h) * 0.85);
-  let gust = sin(time * 1.3 + root.x * 0.7 + root.y * 0.5) * 0.5 + 0.5;
+  // Different phases and rates keep the breeze from forming travelling stripes.
+  let gust = sin(time * (0.65 + 0.45 * r.y) + r.x * 6.2831853) * 0.65
+           + sin(time * (1.15 + 0.35 * r.z) + r.w * 6.2831853) * 0.35;
 
   var d : BladeData;
   d.root = root;
   d.fwd = direction / max(length(direction), 0.001);
-  d.bladeH = C.misc2.w * (0.55 + 0.75 * r.w) * (0.10 + 0.90 * h) * onLawn * mix(0.25, 1.0, verge)
+  d.bladeH = C.misc2.w * (0.65 + 0.75 * r.w) * (0.10 + 0.90 * h) * onLawn
            * mix(1.0, 0.75, cloverDensity(root));
-  d.lean = (0.25 + 0.35 * r.x + 0.25 * gust) + (1.0 - h) * 0.65;
-  d.halfW = C.misc2.w * 0.055 * (0.75 + 0.5 * r.y) * onLawn;
-  d.tc = pack2x16unorm(vec2f(r.w, 1.0 - smoothstep(0.0, 0.45, h)));
+  let cut = 1.0 - smoothstep(0.10, 0.55, h);
+  // Keep the cut surface low and soft so a fresh swath reads as one carpet.
+  d.bladeH *= mix(1.0, 0.30, cut);
+  d.lean = mix(0.26 + 0.80 * r.x + 0.045 * gust, 0.35 + 0.20 * r.x, cut);
+  d.halfW = C.misc2.w * 0.14 * (0.75 + 0.5 * r.y) * onLawn * mix(1.0, 0.20, cut);
+  d.tc = pack2x16unorm(vec2f(r.w, cut));
   return d;
 }
 
@@ -2310,13 +2316,14 @@ fn bladeAt(vi : u32, ii : u32) -> Blade {
   // The blade arcs: it rises fast, then bends over towards its tip.
   let rise = d.bladeH * (t - d.lean * t * t * 0.55);
   let away = d.bladeH * d.lean * t * t;
-  let halfW = d.halfW * (1.0 - pow(t, 0.7));
+  // Keep a broad leaf body before tapering to the tip.
+  let halfW = d.halfW * (1.0 - t * t);
 
   let fwd = d.fwd;
   let sideDir = vec3f(-fwd.y, 0.0, fwd.x);
   let centre = vec3f(d.root.x + fwd.x * away, rise, d.root.y + fwd.y * away);
 
-  let tangent = normalize(vec3f(fwd.x * d.lean * 0.9, 1.0 - d.lean * 0.5, fwd.y * d.lean * 0.9));
+  let tangent = normalize(vec3f(fwd.x * 2.0 * d.lean * t, 1.0 - 1.1 * d.lean * t, fwd.y * 2.0 * d.lean * t));
   var n = normalize(cross(sideDir, tangent));
   n = normalize(n + sideDir * side * 0.35);   // round the blade a little
 
@@ -2395,11 +2402,13 @@ fn fs_blade(i : VSOut) -> @location(0) vec4f {
   let view = normalize(C.eye.xyz - i.wpos);
   if (dot(n, view) < 0.0) { n = -n; }
 
-  var base = mix(vec3f(0.24, 0.48, 0.12), vec3f(0.43, 0.66, 0.22), i.tint);
-  base = mix(base, vec3f(0.64, 0.88, 0.34), smoothstep(0.5, 1.0, i.t) * 0.5);
-  base = mix(base, vec3f(0.70, 0.85, 0.38), i.cut * 0.5);    // a cut blade is pale
+  var base = mix(vec3f(0.20, 0.43, 0.08), vec3f(0.42, 0.67, 0.17), i.tint);
+  base = mix(base * 0.72, base, smoothstep(0.0, 0.45, i.t));
+  base = mix(base, vec3f(0.68, 0.89, 0.32), smoothstep(0.35, 1.0, i.t) * 0.65);
+  let turf = mix(vec3f(0.38, 0.55, 0.18), vec3f(0.43, 0.60, 0.22), i.tint);
+  base = mix(base, turf, i.cut);
 
-  let ao = mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t));
+  let ao = mix(mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t)), 1.0, i.cut);
   return vec4f(shade(base, n, i.wpos, ao), 1.0);
 }
 
@@ -2438,7 +2447,8 @@ fn groundColour(w : vec2f) -> vec3f {
   let soil = vec3f(0.20, 0.40, 0.13);
   // A real lawn stripes because the deck lays the grass over. Same here.
   let stripe = 0.5 + 0.5 * cutSmooth(w).x;
-  let cutG = mix(vec3f(0.38, 0.59, 0.20), vec3f(0.46, 0.66, 0.26), stripe);
+  let cutG = mix(vec3f(0.36, 0.53, 0.17), vec3f(0.43, 0.60, 0.22), stripe)
+           * (1.0 + grain * 0.07);
   var col = mix(soil, cutG, 1.0 - smoothstep(0.0, 0.85, h));
   let dirt = mix(vec3f(0.22, 0.12, 0.065), vec3f(0.34, 0.22, 0.12),
                  still.z * 0.7 + vnoise(w * 8.0) * 0.3);
