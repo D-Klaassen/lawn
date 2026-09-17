@@ -70,12 +70,34 @@ export const DRIVE_STEPS = [1000, 10000, 100000, 500000];
  */
 export const BUMP_STEPS = [5, 40, 200];
 
+/**
+ * Which ladder an Achievement stands in.
+ *
+ * A ladder is a row of the same thing at rising heights, and only one rung of
+ * it is ever worth looking at: the one being climbed. `field` is the odd one —
+ * its nine are not a ladder but a set, climbed in any order, so they are shown
+ * as the ticked list inside `lawn` rather than as nine rows of their own.
+ */
+export type Tier = 'field' | 'lawn' | 'again' | 'blades' | 'tiles' | 'bumps';
+
+/** The ladders the window draws, in the order it draws them. */
+export const TIERS: Tier[] = ['lawn', 'again', 'blades', 'tiles', 'bumps'];
+
 export interface Achievement {
   /** Which bit of the mask this one holds. It must never be reassigned. */
   bit: number;
   name: string;
   blurb: string;
-  earned(tally: Tally): boolean;
+  tier: Tier;
+  /** How far a Tally has come towards it. */
+  have(tally: Tally): number;
+  /** How far it must come. `have` at or past this is earned. */
+  goal: number;
+}
+
+/** How many Fields this Mower has seen finished, at least once each. */
+function fieldsSeen(tally: Tally): number {
+  return tally.q.filter((times) => times >= 1).length;
 }
 
 /**
@@ -85,6 +107,9 @@ export interface Achievement {
  * renumbered: a Mower that earned bit 9 last month must still read bit 9 as
  * the same thing. A new Achievement takes the next free bit, and a retired one
  * leaves its bit standing empty.
+ *
+ * Every one of them is a number against a number, so the window can draw how
+ * far along it is without knowing what any of them mean.
  */
 export const ACHIEVEMENTS: Achievement[] = [
   // 0-8: one per Field, in the reading order of the map.
@@ -92,39 +117,56 @@ export const ACHIEVEMENTS: Achievement[] = [
     bit: field,
     name,
     blurb: `Stand in ${name} as the last of it is cut.`,
-    earned: (tally: Tally) => (tally.q[field] ?? 0) >= 1,
+    tier: 'field' as Tier,
+    have: (tally: Tally) => tally.q[field] ?? 0,
+    goal: 1,
   })),
   {
     bit: 9,
     name: 'The Whole Lawn',
     blurb: 'Be there for the finish of every one of the nine Fields.',
-    earned: (tally) => FIELD_NAMES.every((_, field) => (tally.q[field] ?? 0) >= 1),
+    tier: 'lawn',
+    have: fieldsSeen,
+    goal: FIELD_NAMES.length,
   },
   {
     bit: 10,
     name: 'It Grew Back',
     blurb: 'Be there for one Field finishing three times. The grass returns; so must you.',
-    earned: (tally) => tally.q.some((times) => times >= THRICE),
+    tier: 'again',
+    have: (tally) => Math.max(0, ...tally.q),
+    goal: THRICE,
   },
   ...['First Cut', 'Grass Stains', 'Deep Green', 'The Long Season'].map((name, step) => ({
     bit: 11 + step,
     name,
     blurb: `Cut ${BLADE_STEPS[step].toLocaleString('en-GB')} blades.`,
-    earned: (tally: Tally) => tally.c >= BLADE_STEPS[step],
+    tier: 'blades' as Tier,
+    have: (tally: Tally) => tally.c,
+    goal: BLADE_STEPS[step],
   })),
   ...['Round the Block', 'Out and Back', 'The Long Way', 'Nine Fields Wide'].map((name, step) => ({
     bit: 15 + step,
     name,
     blurb: `Drive ${DRIVE_STEPS[step].toLocaleString('en-GB')} Tiles.`,
-    earned: (tally: Tally) => tally.d >= DRIVE_STEPS[step],
+    tier: 'tiles' as Tier,
+    have: (tally: Tally) => tally.d,
+    goal: DRIVE_STEPS[step],
   })),
   ...['Paint Swap', 'Rough Ground', 'Demolition Derby'].map((name, step) => ({
     bit: 19 + step,
     name,
     blurb: `Be in ${BUMP_STEPS[step].toLocaleString('en-GB')} Bumps.`,
-    earned: (tally: Tally) => tally.b >= BUMP_STEPS[step],
+    tier: 'bumps' as Tier,
+    have: (tally: Tally) => tally.b,
+    goal: BUMP_STEPS[step],
   })),
 ];
+
+/** Whether a Tally has earned one Achievement. */
+export function earned(achievement: Achievement, tally: Tally): boolean {
+  return achievement.have(tally) >= achievement.goal;
+}
 
 /** A Mower that has done nothing yet. */
 export function emptyTally(): Tally {
@@ -142,7 +184,7 @@ export function emptyTally(): Tally {
 export function earnedMask(tally: Tally): number {
   let mask = 0;
   for (const achievement of ACHIEVEMENTS) {
-    if (achievement.earned(tally)) mask |= 1 << achievement.bit;
+    if (earned(achievement, tally)) mask |= 1 << achievement.bit;
   }
   return mask >>> 0;
 }

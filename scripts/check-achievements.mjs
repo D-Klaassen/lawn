@@ -11,7 +11,7 @@
  *
  *     node scripts/check-achievements.mjs
  */
-import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, earnedMask, emptyTally, holds } from '../public/achievements.js';
+import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, TIERS, earned, earnedMask, emptyTally, holds } from '../public/achievements.js';
 import { FIELD_NAMES as MAP_NAMES, FIELD_SLACK as MAP_SLACK } from '../public/fields.js';
 
 const problems = [];
@@ -39,7 +39,11 @@ for (const achievement of ACHIEVEMENTS) {
 // Nothing a Mower has never done is already earned.
 const nothing = emptyTally();
 for (const achievement of ACHIEVEMENTS) {
-  if (achievement.earned(nothing)) problems.push(`"${achievement.name}" is earned by a Mower that has done nothing`);
+  if (earned(achievement, nothing)) problems.push(`"${achievement.name}" is earned by a Mower that has done nothing`);
+  if (!(achievement.goal > 0)) problems.push(`"${achievement.name}" has no goal to measure against`);
+  if (achievement.tier !== 'field' && !TIERS.includes(achievement.tier)) {
+    problems.push(`"${achievement.name}" stands in tier "${achievement.tier}", which the window never draws`);
+  }
 }
 if (earnedMask(nothing) !== 0) problems.push('a Mower that has done nothing holds an Achievement');
 
@@ -62,6 +66,20 @@ for (const [what, steps] of [['blades', BLADE_STEPS], ['tiles driven', DRIVE_STE
     if (!(steps[i] > steps[i - 1])) problems.push(`the ${what} ladder does not climb at step ${i}: ${steps[i - 1]} then ${steps[i]}`);
   }
 }
+
+// The window shows a ladder's earned rungs and then one more, so the goals of
+// a ladder must rise in the order the table lists them. A ladder out of order
+// would hide the rung being climbed behind one already passed.
+for (const tier of TIERS) {
+  const ladder = ACHIEVEMENTS.filter((a) => a.tier === tier);
+  if (!ladder.length) problems.push(`tier "${tier}" is drawn by the window but holds nothing`);
+  for (let i = 1; i < ladder.length; i++) {
+    if (!(ladder[i].goal > ladder[i - 1].goal)) {
+      problems.push(`the "${tier}" ladder is out of order at "${ladder[i].name}": ${ladder[i - 1].goal} then ${ladder[i].goal}`);
+    }
+  }
+}
+
 
 // Being there for one Field is not being there for another.
 for (let field = 0; field < FIELD_NAMES.length; field++) {

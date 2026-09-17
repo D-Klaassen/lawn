@@ -316,6 +316,29 @@
   .award-copy { flex: 1; min-width: 0; }
   .award-name { display: block; font: 14px/1.3 Georgia, serif; color: #9aa48c; }
   .award-blurb { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.4; letter-spacing: .02em; color: #79836c; }
+  .award-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .award-count {
+    font: 10px/1.3 ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums; white-space: nowrap; color: #cec9b6;
+  }
+  .award-bar {
+    display: block; appearance: none; border: 0; width: 100%; height: 3px;
+    margin-top: 6px; background: #ffffff12; border-radius: 3px; overflow: hidden;
+  }
+  .award-bar::-webkit-progress-bar { background: #ffffff12; }
+  .award-bar::-webkit-progress-value { background: linear-gradient(90deg, #867039, #e8cd80); transition: width .4s ease; }
+  .award-bar::-moz-progress-bar { background: #e8cd80; }
+  /* The nine Fields are a set and not a ladder, so they are the ticked list
+     inside the one Achievement that asks for all of them, rather than nine
+     rows saying the same kind of thing. */
+  .award-fields {
+    list-style: none; margin: 8px 0 1px; padding: 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px 14px;
+  }
+  .award-fields li { display: flex; gap: 6px; font: 11px/1.5 Georgia, serif; color: #79836c; }
+  .award-fields li::before { content: "\00b7"; width: 9px; text-align: center; color: #6f7d5f; }
+  .award-fields li.done { color: #a9d98f; }
+  .award-fields li.done::before { content: "\2713"; color: #c6efa0; }
   .award.earned { background: rgba(229, 255, 151, .08); }
   .award.earned .award-mark { color: #c6efa0; }
   .award.earned .award-name { color: #ecd16b; }
@@ -446,6 +469,13 @@
   #emote-row .touch-btn:nth-child(5) { animation-delay: .16s; }
   @keyframes emote-pop { from { transform: scale(.2); opacity: 0; } }
   body.touch #board, body.touch #awards { pointer-events: auto; }
+  /* A thumb screen keeps a column of buttons down the right. The window stands
+     in what is left of the width rather than centred under them, or the count
+     on the end of every bar reads from behind a button. */
+  body.touch #awards {
+    left: 10px; right: calc(84px + var(--safe-right, 0px)); width: auto;
+    transform: translateY(-50%);
+  }
   #awards-list { pointer-events: auto; }
 
   @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
@@ -474,6 +504,7 @@
     #awards-list { max-height: 52dvh; }
     .award { padding: 6px; gap: 8px; }
     .award-name { font-size: 13px; }
+    .award-fields li { font-size: 10px; }
     /* The score has gone to the top on a screen this small, so the card
        clears the map and the stick instead. */
     #award-toast { bottom: calc(var(--quest-floor) + 6px); width: min(88vw, 400px); }
@@ -499,6 +530,7 @@
     #field-banner.triumph.visible { animation: none; }
     #award-toast.visible, #award-toast.visible::after,
     #award-toast.visible #award-toast-name { animation: none; }
+    .award-bar::-webkit-progress-value { transition: none; }
     #award-toast-name { background-position: 60% 0; }
     #field-meter::-webkit-progress-value { transition: none; }
     #stick, #stick-knob, .touch-btn { transition: none; }
@@ -568,7 +600,7 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
-import { ACHIEVEMENTS, countHeld, holds } from '/achievements.js';
+import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
  * reward belongs on the Lawn: the parcel itself lights up, and the Mower
@@ -1040,6 +1072,7 @@ function connect() {
       landScore(bladesCut);
       // The Achievements come back with the Key. They are what this Mower
       // already had, so they land on the screen without a card.
+      landTally(m);
       landAwards(m.a);
       connected = true;
       return;
@@ -1081,10 +1114,13 @@ function connect() {
       // Lawn says here what it really cut. The Lawn wins: a swath it refused
       // was never grass this Mower took.
       if (Number.isFinite(m.s) && m.s >= 0) bladesCut = m.s;
+      // The same message carries the rest of what the window draws.
+      landTally(m);
     } else if (m.t === "got") {
       // The Lawn has awarded something. It sends the whole mask and not the
       // one bit, so a card missed while the socket was away is never lost:
       // the next one to arrive says everything this Mower holds.
+      landTally(m);
       takeAwards(m.a);
     } else if (m.t === "bumped") {
       // The Stars of another Mower are its own word, exactly like its
@@ -1298,35 +1334,111 @@ const awardToastName = document.getElementById("award-toast-name");
 const awardToastBlurb = document.getElementById("award-toast-blurb");
 /** How long one card stands before the next one comes, in milliseconds. */
 const AWARD_MS = 3400;
-let awardMask = 0, awardsOpen = false;
+let awardMask = 0, awardsOpen = false, awardsAt = 0;
+/**
+ * What the Lawn says this Mower has done. The window draws how far along each
+ * ladder it is, and a bar it has not been told about cannot be drawn.
+ */
+let myTally = { c: 0, q: new Array(9).fill(0), d: 0, b: 0 };
 /** Achievements waiting for their turn on the card. Two can land at once. */
 const awardQueue = [];
 let awardTimer;
 
+/** Take a tally off any message that carries one. */
+function landTally(m) {
+  if (Number.isFinite(m.s) && m.s >= 0) myTally.c = m.s;
+  if (Number.isFinite(m.d) && m.d >= 0) myTally.d = m.d;
+  if (Number.isFinite(m.b) && m.b >= 0) myTally.b = m.b;
+  if (Array.isArray(m.q)) myTally.q = m.q.map((n) => (Number.isFinite(n) && n > 0 ? n : 0));
+}
+
+/**
+ * Draw the window: every rung already climbed, and the one being climbed.
+ *
+ * A ladder shows nothing above the rung you are on. "Cut a million blades" is
+ * not a thing to read while you are working on the first thousand — it is a
+ * wall of grey text that buries the two lines which do mean something. So each
+ * ladder gives up its earned rungs and then its next one, with a bar, and
+ * stops. The nine Fields are the exception: they are a set and not a ladder,
+ * so they come as the ticked list inside the Achievement that asks for all of
+ * them.
+ */
 function drawAwards() {
-  awardsCount.textContent = `${ACHIEVEMENTS.filter((a) => holds(awardMask, a.bit)).length} / ${ACHIEVEMENTS.length}`;
-  awardsList.replaceChildren(...ACHIEVEMENTS.map((achievement) => {
+  // The client counts its own blades along so the digits roll without waiting
+  // for the Lawn, and the bar should not be slower than the number above it.
+  const tally = { ...myTally, c: Math.max(myTally.c, bladesCut) };
+  const shown = [];
+  for (const tier of TIERS) {
+    for (const achievement of ACHIEVEMENTS) {
+      if (achievement.tier !== tier) continue;
+      // Earned is what the Lawn says, never what this client works out. The
+      // bar below may reach its end a moment before the tick arrives, and that
+      // is the truth of it: the blades are counted here and awarded there.
+      const done = holds(awardMask, achievement.bit);
+      shown.push({ achievement, done });
+      if (!done) break;
+    }
+  }
+  awardsCount.textContent = `${countHeld(awardMask)} / ${ACHIEVEMENTS.length}`;
+  // A redraw while the window is open must not throw the list back to the top.
+  const scroll = awardsList.scrollTop;
+  awardsList.replaceChildren(...shown.map(({ achievement, done }) => {
     const row = document.createElement("li");
-    const earned = holds(awardMask, achievement.bit);
-    row.className = earned ? "award earned" : "award";
+    row.className = done ? "award earned" : "award";
     const mark = document.createElement("span");
     mark.className = "award-mark";
-    mark.textContent = earned ? "\u2713" : "\u00b7";
+    mark.textContent = done ? "\u2713" : "\u00b7";
     mark.setAttribute("aria-hidden", "true");
+
     const copy = document.createElement("div");
     copy.className = "award-copy";
+    const head = document.createElement("div");
+    head.className = "award-head";
     const name = document.createElement("span");
     name.className = "award-name";
     name.textContent = achievement.name;
+    head.append(name);
+
+    const have = Math.min(achievement.goal, Math.floor(achievement.have(tally)));
+    if (!done) {
+      const count = document.createElement("span");
+      count.className = "award-count";
+      count.textContent = `${have.toLocaleString()} / ${achievement.goal.toLocaleString()}`;
+      head.append(count);
+    }
     const blurb = document.createElement("span");
     blurb.className = "award-blurb";
     blurb.textContent = achievement.blurb;
-    copy.append(name, blurb);
+    copy.append(head, blurb);
+
+    if (!done) {
+      const bar = document.createElement("progress");
+      bar.className = "award-bar";
+      bar.max = achievement.goal;
+      bar.value = have;
+      bar.setAttribute("aria-hidden", "true");
+      copy.append(bar);
+    }
+    // The set of nine rides inside the one Achievement that asks for them all.
+    if (achievement.tier === "lawn") {
+      const list = document.createElement("ul");
+      list.className = "award-fields";
+      for (const field of ACHIEVEMENTS.filter((one) => one.tier === "field")) {
+        const item = document.createElement("li");
+        const got = holds(awardMask, field.bit);
+        if (got) item.className = "done";
+        item.textContent = field.name;
+        item.setAttribute("aria-label", `${field.name}. ${got ? "Seen finished." : "Not yet."}`);
+        list.append(item);
+      }
+      copy.append(list);
+    }
     row.append(mark, copy);
-    // A locked row still reads out as locked, because the tick is decoration.
-    row.setAttribute("aria-label", `${achievement.name}. ${achievement.blurb} ${earned ? "Earned." : "Not earned."}`);
+    row.setAttribute("aria-label",
+      `${achievement.name}. ${achievement.blurb} ${done ? "Earned." : `${have} of ${achievement.goal}.`}`);
     return row;
   }));
+  awardsList.scrollTop = scroll;
 }
 
 /** Show the next card, or take the last one away when there are no more. */
@@ -1371,6 +1483,8 @@ function takeAwards(mask) {
 
 function openAwards() {
   awardsOpen = true;
+  awardsAt = performance.now();
+  drawAwards();
   awards.hidden = false;
   awardsBtn.setAttribute("aria-pressed", "true");
 }
@@ -3537,6 +3651,9 @@ function frame(ts) {
   mowerSound.update(me.v, dt, connected);
   animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
+  // The bars move while the window is held open, or the one line that says
+  // what you are working on is the one line that never changes.
+  if (awardsOpen && ts - awardsAt > 400) { drawAwards(); awardsAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now));
   render(now, ts, dt);
   drawHud();
