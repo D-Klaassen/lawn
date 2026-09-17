@@ -285,9 +285,16 @@ left on, so a hand that leaves the keyboard always leaves the Lawn in view.
 
 Everything else in that corner is measured from the map and not from a guess
 at how big the map is. `drawMap` publishes `--map-top` and `--map-side` when
-they move; the keys stand on the first of those, the World Quest Tracker
-stops its list above the keys, and the touch buttons stand beside them. The
-map is sized against the window, so a corner measured in fixed pixels is a
+they move. The keys stand on the middle of those two — the map's right edge
+is the margin it is drawn with and its left edge is `--map-side` in from the
+right, so the middle of the two is the middle of the map at any size. The
+World Quest Tracker takes the height that is left above them, and the touch
+buttons stand where the keys would be.
+
+The Tracker takes that height as a whole, and its list takes what the heading
+and the summary leave. Capping the list instead means guessing what those two
+come to, and on a narrow window the summary wraps and they come to more — how
+the list came to lie across the keys. A corner measured in fixed pixels is a
 corner that overlaps itself on some window nobody tried.
 
 ## The Lawn decides where a Mower is
