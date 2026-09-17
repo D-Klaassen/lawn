@@ -82,6 +82,27 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   spans the whole Cycle and not the Regrowth alone, so one entry still says
   everything about one Tile.
 
+## The water wanders, or it is a box
+
+`across` and `along` are the two sides of a rectangle drawn in a seam's own
+frame, so a Ditch measured from them is a rectangle — and that is exactly what
+it looked like beside ground that had learned to be irregular. The lane already
+wanders, and so does the bare earth around a tree.
+
+`shoreWander` is three sines of the unwarped point, mean zero, added to the
+Ditch's half-width and to both of its ends. The Ditch keeps its width on
+average and only its edge moves, so the crossing is still a crossing and every
+Field is still reachable — `scripts/check-map.mjs` is what says so, and it is
+the reason the wander is a Tile and not three.
+
+It is one wander per point and not one per Ditch: it depends on where the point
+is and not on which seam is being measured, and `placeAt` is read once per Tile
+of the Lawn on both sides.
+
+It goes in `placeAt` and not in the shading, so the water a Mower sees is the
+water it cannot drive into. Softening only the drawn edge would have been half
+the work and a lie.
+
 ## One table draws the map
 
 The map is not a drawing and it is not stored. One table of nine seeds says
@@ -912,6 +933,10 @@ both, and the minimap is measured against the height as well as the width.
 - `public/fields.js` — the map: the seeds, the lanes, the Ditches, and the
   WGSL the shader is built from. One file, three readers.
 - `scripts/check-map.mjs` — reads that map and says whether it holds together.
+- `scripts/check-junctions.mjs` — walks a third of a million points and proves
+  the Lawn's copy of the map answers exactly what the client's does. It is the
+  only thing that does, so it is wired into `package.json` as `test:junctions`;
+  it had rotted unnoticed because nothing ran it.
 - `src/achievements.ts` — the Achievements: the bits, the thresholds, and what
   each one is called. Built to `public/achievements.js` the way `src/ball.ts`
   is built to `public/ball.js`, so the Lawn and the client read one table and

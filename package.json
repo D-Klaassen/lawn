@@ -13,6 +13,7 @@
     "build:ball": "esbuild src/ball.ts --bundle --format=esm --minify --outfile=public/ball.js",
     "test:ball": "npm run build:ball && node scripts/check-ball.mjs",
     "test:achievements": "npm run build:achievements && node scripts/check-achievements.mjs",
+    "test:junctions": "node scripts/check-junctions.mjs",
     "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
     "test:trees": "npm run build:trees && node scripts/check-trees.mjs"
   },
