@@ -124,7 +124,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   {
     bit: 9,
     name: 'The Whole Lawn',
-    blurb: 'Be there for the finish of every one of the nine Fields.',
+    blurb: 'Be there as all nine Fields are finished.',
     tier: 'lawn',
     have: fieldsSeen,
     goal: FIELD_NAMES.length,
@@ -132,7 +132,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   {
     bit: 10,
     name: 'It Grew Back',
-    blurb: 'Be there for one Field finishing three times. The grass returns; so must you.',
+    blurb: 'Be there as one Field is finished three times.',
     tier: 'again',
     have: (tally) => Math.max(0, ...tally.q),
     goal: THRICE,
