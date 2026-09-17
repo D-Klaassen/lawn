@@ -673,7 +673,7 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { TREES, treeMesh } from '/trees.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, DITCHES, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
@@ -2230,8 +2230,8 @@ fn sunlight(w : vec3f) -> f32 {
   // control flow, so sample first and mask the result afterwards.
   let inside = ndc.z <= 1.0 && ndc.z >= 0.0 &&
                uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
-  let texel = 1.0 / 1536.0;
-  let depth = clamp(ndc.z - 0.0016, 0.0, 1.0);
+  let texel = 1.0 / f32(textureDimensions(shadowMap).x);
+  let depth = clamp(ndc.z - 0.0006, 0.0, 1.0);
   var sum = 0.0;
   for (var y = -1; y <= 1; y = y + 1) {
     for (var x = -1; x <= 1; x = x + 1) {
@@ -2279,23 +2279,29 @@ fn growBlade(ii : u32) -> BladeData {
   let density = lawnEdge(root) * verge;
   let patchCentre = (C.misc.yz + vec2f(C.misc.w * 0.5)) * cellSize;
   let patchEdge = C.misc.w * cellSize * 0.5 - max(abs(root.x - patchCentre.x), abs(root.y - patchCentre.y));
-  let onLawn = smoothstep(r.x * 0.55, r.x * 0.55 + 0.45, density)
-             * smoothstep(0.0, 6.0, patchEdge);
+  // Thin out roots at the verge without shrinking the surviving blades.
+  let present = select(0.0, 1.0, jitter.z < density);
+  let onLawn = present * smoothstep(0.0, 6.0, patchEdge);
   let time = C.misc.x;
 
   // Which way it points, and how far it leans over.
   let face = r.z * 6.2831853;
   let direction = mix(vec2f(cos(face), sin(face)), cutSmooth(root), (1.0 - h) * 0.85);
-  let gust = sin(time * 1.3 + root.x * 0.7 + root.y * 0.5) * 0.5 + 0.5;
+  // Different phases and rates keep the breeze from forming travelling stripes.
+  let gust = sin(time * (0.65 + 0.45 * r.y) + r.x * 6.2831853) * 0.65
+           + sin(time * (1.15 + 0.35 * r.z) + r.w * 6.2831853) * 0.35;
 
   var d : BladeData;
   d.root = root;
   d.fwd = direction / max(length(direction), 0.001);
-  d.bladeH = C.misc2.w * (0.55 + 0.75 * r.w) * (0.10 + 0.90 * h) * onLawn * mix(0.25, 1.0, verge)
+  d.bladeH = C.misc2.w * (0.65 + 0.75 * r.w) * (0.10 + 0.90 * h) * onLawn
            * mix(1.0, 0.75, cloverDensity(root));
-  d.lean = (0.25 + 0.35 * r.x + 0.25 * gust) + (1.0 - h) * 0.65;
-  d.halfW = C.misc2.w * 0.055 * (0.75 + 0.5 * r.y) * onLawn;
-  d.tc = pack2x16unorm(vec2f(r.w, 1.0 - smoothstep(0.0, 0.45, h)));
+  let cut = 1.0 - smoothstep(0.10, 0.55, h);
+  // Keep the cut surface low and soft so a fresh swath reads as one carpet.
+  d.bladeH *= mix(1.0, 0.30, cut);
+  d.lean = mix(0.26 + 0.80 * r.x + 0.045 * gust, 0.35 + 0.20 * r.x, cut);
+  d.halfW = C.misc2.w * 0.14 * (0.75 + 0.5 * r.y) * onLawn * mix(1.0, 0.20, cut);
+  d.tc = pack2x16unorm(vec2f(r.w, cut));
   return d;
 }
 
@@ -2310,13 +2316,14 @@ fn bladeAt(vi : u32, ii : u32) -> Blade {
   // The blade arcs: it rises fast, then bends over towards its tip.
   let rise = d.bladeH * (t - d.lean * t * t * 0.55);
   let away = d.bladeH * d.lean * t * t;
-  let halfW = d.halfW * (1.0 - pow(t, 0.7));
+  // Keep a broad leaf body before tapering to the tip.
+  let halfW = d.halfW * (1.0 - t * t);
 
   let fwd = d.fwd;
   let sideDir = vec3f(-fwd.y, 0.0, fwd.x);
   let centre = vec3f(d.root.x + fwd.x * away, rise, d.root.y + fwd.y * away);
 
-  let tangent = normalize(vec3f(fwd.x * d.lean * 0.9, 1.0 - d.lean * 0.5, fwd.y * d.lean * 0.9));
+  let tangent = normalize(vec3f(fwd.x * 2.0 * d.lean * t, 1.0 - 1.1 * d.lean * t, fwd.y * 2.0 * d.lean * t));
   var n = normalize(cross(sideDir, tangent));
   n = normalize(n + sideDir * side * 0.35);   // round the blade a little
 
@@ -2381,12 +2388,14 @@ fn shade(base : vec3f, n : vec3f, wpos : vec3f, aoIn : f32) -> vec3f {
   let lam = max(dot(n, sun), 0.0);
   let cloudPoint = wpos.xz + sun.xz * max(0.0, CLOUD_HEIGHT - wpos.y) / max(sun.y, 0.15);
   let vis = sunlight(wpos) * (1.0 - cloudCover(cloudPoint) * 0.55);
+  // Sky fill preserves detail in shade; only the direct sun is occluded.
   let sky = C.skyCol.rgb * (C.opts.z * (0.65 + 0.35 * n.y));
   let ballHeight = max(0.0, C.ball.y - C.ball.w);
   let footprint = length(wpos.xz - C.ball.xz) / (C.ball.w + ballHeight * 0.12 + 0.001);
   let contact = (1.0 - smoothstep(0.25, 1.5, footprint)) * 0.27 / (1.0 + ballHeight * 0.15)
     * (1.0 - smoothstep(0.0, 1.2, wpos.y)) * step(0.1, C.ball.w);
-  return base * (sky + C.sunCol.rgb * lam * mix(0.3, 1.0, vis)) * aoIn * (1.0 - contact);
+  let direct = C.sunCol.rgb * lam * vis;
+  return base * (sky + direct) * aoIn * (1.0 - contact);
 }
 
 @fragment
@@ -2395,11 +2404,13 @@ fn fs_blade(i : VSOut) -> @location(0) vec4f {
   let view = normalize(C.eye.xyz - i.wpos);
   if (dot(n, view) < 0.0) { n = -n; }
 
-  var base = mix(vec3f(0.24, 0.48, 0.12), vec3f(0.43, 0.66, 0.22), i.tint);
-  base = mix(base, vec3f(0.64, 0.88, 0.34), smoothstep(0.5, 1.0, i.t) * 0.5);
-  base = mix(base, vec3f(0.70, 0.85, 0.38), i.cut * 0.5);    // a cut blade is pale
+  var base = mix(vec3f(0.20, 0.43, 0.08), vec3f(0.42, 0.67, 0.17), i.tint);
+  base = mix(base * 0.72, base, smoothstep(0.0, 0.45, i.t));
+  base = mix(base, vec3f(0.68, 0.89, 0.32), smoothstep(0.35, 1.0, i.t) * 0.65);
+  let turf = mix(vec3f(0.38, 0.55, 0.18), vec3f(0.43, 0.60, 0.22), i.tint);
+  base = mix(base, turf, i.cut);
 
-  let ao = mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t));
+  let ao = mix(mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t)), 1.0, i.cut);
   return vec4f(shade(base, n, i.wpos, ao), 1.0);
 }
 
@@ -2438,7 +2449,8 @@ fn groundColour(w : vec2f) -> vec3f {
   let soil = vec3f(0.20, 0.40, 0.13);
   // A real lawn stripes because the deck lays the grass over. Same here.
   let stripe = 0.5 + 0.5 * cutSmooth(w).x;
-  let cutG = mix(vec3f(0.38, 0.59, 0.20), vec3f(0.46, 0.66, 0.26), stripe);
+  let cutG = mix(vec3f(0.36, 0.53, 0.17), vec3f(0.43, 0.60, 0.22), stripe)
+           * (1.0 + grain * 0.07);
   var col = mix(soil, cutG, 1.0 - smoothstep(0.0, 0.85, h));
   let dirt = mix(vec3f(0.22, 0.12, 0.065), vec3f(0.34, 0.22, 0.12),
                  still.z * 0.7 + vnoise(w * 8.0) * 0.3);
@@ -2725,7 +2737,20 @@ fn fs_mower(i : MOut) -> @location(0) vec4f {
   if (i.panel > 0.5) { base = vec3f(0.055, 0.065, 0.055); }
   if (i.panel > 1.5) { base = vec3f(0.31, 0.35, 0.32); }
   if (i.panel > 2.5) { base = vec3f(0.88, 0.87, 0.71); }
-  return vec4f(shade(base, normalize(i.nrm), i.wpos, 1.0), 1.0);
+  let n = normalize(i.nrm);
+  let sun = normalize(C.sun.xyz);
+  let view = normalize(C.eye.xyz - i.wpos);
+  let midway = normalize(sun + view);
+  // Enamel and metal catch the sun; rubber stays matte. Restrict this extra
+  // shadow lookup to mower pixels, not the much larger grass surface.
+  let paint = 1.0 - step(0.5, i.panel);
+  let metal = step(1.5, i.panel) * (1.0 - step(2.5, i.panel));
+  let gloss = pow(max(dot(n, midway), 0.0), mix(24.0, 48.0, metal));
+  let cloudPoint = i.wpos.xz + sun.xz * max(0.0, CLOUD_HEIGHT - i.wpos.y) / max(sun.y, 0.15);
+  let visibility = sunlight(i.wpos) * (1.0 - cloudCover(cloudPoint) * 0.55);
+  let reflection = C.sunCol.rgb * gloss * (paint * 0.42 + metal * 0.65)
+    * visibility * max(dot(n, sun), 0.0);
+  return vec4f(shade(base, n, i.wpos, 1.0) + reflection, 1.0);
 }
 
 /* ---------------- trees ---------------- */
@@ -2863,11 +2888,11 @@ function hslToRgb(hDeg, sat, light) {
 }
 
 const DAYLIGHT = {
-  dir: norm([0.4, 1, 0.45]),
+  dir: norm([-0.65, 0.85, 0.45]),
   daylight: 1,
-  light: [1.00, 0.97, 0.86],
-  skyCol: [0.80, 0.88, 0.76],
-  ambient: 0.47,
+  light: [1.32, 1.12, 0.78],
+  skyCol: [0.78, 0.86, 0.96],
+  ambient: 0.40,
 };
 
 function mowerMesh() {
@@ -3409,6 +3434,100 @@ function drawMowing(cw, ch, dpr) {
   g.restore();
 }
 
+// Local cosmetic wake: distance-spaced, bounded, and independent of frame rate.
+const wheelWake = [];
+let wakeAnchor = null;
+function drawWheelWake(cw, ch, dpr) {
+  const now = performance.now();
+  if (reducedMotion.matches) { wheelWake.length = 0; wakeAnchor = null; return; }
+  const project = projector(cw, ch);
+  if (!wakeAnchor) wakeAnchor = { x: me.x, y: me.y };
+  const distance = Math.hypot(me.x - wakeAnchor.x, me.y - wakeAnchor.y);
+  if (distance >= 0.45) {
+    // A correction/respawn must not paint a line across the map.
+    if (distance < 3) {
+      const direction = Math.sign(me.v || 1);
+      const ca = Math.cos(me.a), sa = Math.sin(me.a);
+      for (const side of [-1, 1]) {
+        const axle = (direction > 0 ? -0.57 : 0.61) * MOWER_SCALE;
+        const tread = side * 0.715 * MOWER_SCALE;
+        const x = me.x + ca * axle - sa * tread;
+        const y = me.y + sa * axle + ca * tread;
+        const grass = fieldAt(x, y, W, H) >= 0;
+        const px = x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
+        const py = y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
+        const bridge = DITCHES.some(([a, b]) => Math.hypot(
+          px - (SEEDS[a][0] + SEEDS[b][0]) * W / 2,
+          py - (SEEDS[a][1] + SEEDS[b][1]) * H / 2) < BRIDGE + 2.6);
+        if (!bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
+          wheelWake.push({ x, y, ca: ca * direction, sa: sa * direction, grass, born: now,
+            strength: Math.min(1, Math.abs(me.v) / 9) });
+        }
+      }
+    }
+    wakeAnchor = { x: me.x, y: me.y };
+  }
+  while (wheelWake.length > 96 || (wheelWake.length && now - wheelWake[0].born > 2600)) wheelWake.shift();
+  g.save();
+  g.lineCap = 'round';
+  // Mask individual body/wheel silhouettes, leaving the space under the
+  // handle open so the trail reaches the tyre contact patches.
+  for (const mower of allMowers()) {
+    const ca = Math.cos(mower.a), sa = Math.sin(mower.a);
+    const parts = [[-0.82, 0.92, 0.18, 0.47, -0.69, 0.69],
+      [-0.52, 0.28, 0.47, 0.81, -0.385, 0.385]];
+    for (const axle of [-0.57, 0.61]) for (const side of [-1, 1]) {
+      const r = axle < 0 ? 0.29 : 0.23;
+      parts.push([axle-r, axle+r, 0, r*2, Math.min(side*0.60,side*0.85), Math.max(side*0.60,side*0.85)]);
+    }
+    for (const [x0,x1,h0,h1,z0,z1] of parts) {
+      const corners = [];
+      for (const lx of [x0,x1]) for (const lz of [z0,z1]) for (const lh of [h0,h1]) {
+        const x = lx*MOWER_SCALE, z = lz*MOWER_SCALE;
+        const p = project(mower.x + x*ca - z*sa, lh*MOWER_SCALE, mower.y + x*sa + z*ca);
+        if (p) corners.push(p);
+      }
+      if (corners.length < 3) continue;
+      corners.sort((a,b) => a[0]-b[0] || a[1]-b[1]);
+      const cross = (a,b,c) => (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+      const half = points => {
+        const out = [];
+        for (const p of points) {
+          while (out.length > 1 && cross(out.at(-2),out.at(-1),p) <= 0) out.pop();
+          out.push(p);
+        }
+        return out.slice(0,-1);
+      };
+      const hull = [...half(corners), ...half([...corners].reverse())];
+      g.beginPath(); g.rect(0,0,cw,ch);
+      g.moveTo(...hull[0]);
+      for (const p of hull.slice(1)) g.lineTo(...p);
+      g.closePath(); g.clip('evenodd');
+    }
+  }
+  for (const mark of wheelWake) {
+    const age = (now - mark.born) / 1000;
+    const life = mark.grass ? 2.6 : 0.85;
+    if (age >= life) continue;
+    const p = project(mark.x, mark.grass ? 0.06 : 0.15 + age * 0.7, mark.y);
+    if (!p) continue;
+    g.globalAlpha = (1 - age / life) * (mark.grass ? 0.30 : 0.36 * mark.strength);
+    if (mark.grass) {
+      const end = project(mark.x - mark.ca * 0.65, 0.06, mark.y - mark.sa * 0.65);
+      if (!end) continue;
+      g.strokeStyle = '#314521'; g.lineWidth = 3.5 * dpr;
+      g.beginPath(); g.moveTo(...p); g.lineTo(...end); g.stroke();
+    } else {
+      const radius = (3 + age * 12) * dpr;
+      const dust = g.createRadialGradient(...p, 0, ...p, radius);
+      dust.addColorStop(0, '#d9c393'); dust.addColorStop(1, 'rgba(217,195,147,0)');
+      g.fillStyle = dust;
+      g.beginPath(); g.arc(...p, radius, 0, Math.PI * 2); g.fill();
+    }
+  }
+  g.restore();
+}
+
 function drawBumps(cw, ch, dpr) {
   const now = performance.now();
   while (bumps.length && now - bumps[0].born > 480) bumps.shift();
@@ -3873,6 +3992,7 @@ function drawHud() {
   if (hud.width !== cw || hud.height !== ch) { hud.width = cw; hud.height = ch; }
   g.clearRect(0, 0, cw, ch);
   updateScore(bladesCut, performance.now());
+  drawWheelWake(cw, ch, dpr);
   drawMowing(cw, ch, dpr);
   drawBumps(cw, ch, dpr);
   drawStars(cw, ch, dpr);
