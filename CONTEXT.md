@@ -705,6 +705,51 @@ and you. The server still says how many sockets it holds, in the hello and in
 a `mowers` message, because that is the honest answer to a different question
 and it is what the address count is made of. Nothing on the screen uses it.
 
+## The window shows the rung you are on
+
+Twenty-two Achievements is twenty-two lines, and twenty of them say nothing a
+Mower can act on. "Cut a million blades" is not a thing to read while you are
+working on the first thousand: it is grey text burying the two lines that mean
+something today.
+
+So a ladder — the blades, the Tiles driven, the Bumps — gives up the rungs it
+has climbed and then the one being climbed, with a bar and a count, and stops.
+Nothing above that is drawn until it is next.
+
+The nine Fields are the exception, because they are a set and not a ladder:
+they are climbed in any order, so there is no "next" among them. They come as
+the ticked list inside `The Whole Lawn`, which is the Achievement that asks for
+all nine. One line, nine ticks, and the same 0/9 the bar shows.
+
+Every Achievement is therefore a number against a number — `have` against
+`goal` — and the window draws the bar without knowing what any of them mean.
+`scripts/check-achievements.mjs` proves each ladder's goals rise in the order
+the table lists them, because the window shows the earned rungs and then one
+more: a ladder out of order would hide the rung being climbed behind one
+already passed.
+
+The window is meant to be read at a glance and not scrolled, so everything in
+it is measured against that. A rung already climbed gives up its description
+and keeps its name — a tick over a line saying what it asked for is the line
+that pushes the rung you are on off the bottom. The nine take as many columns
+as the width allows, because one column is nine rows and nine rows is the whole
+of the room on a phone.
+
+Measured at the worst the window ever gets — three rungs climbed on two ladders
+and two on the third, which is thirteen rows — it comes to 542 px on a desktop
+and 566 px on a phone, inside the 608 and 601 they are given. It still scrolls
+on a window under about 700 px tall, and that is the honest limit of fitting
+twenty-two Achievements in one card.
+
+What is earned is the mask and never what the client works out. The bar may
+reach its end a moment before the tick arrives, and that is the truth of it —
+the blades are counted here and awarded there, the same bargain the Score
+already makes.
+
+The tally the bars are drawn from rides on `{t:"score"}`, which already goes to
+that one Mower four times a second and is never broadcast. A bar cannot be
+drawn from a number the client was never told.
+
 ## The board wears the medals
 
 Every name on the board carries a star with a number in it: how many
