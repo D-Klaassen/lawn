@@ -11,7 +11,7 @@
  *
  *     node scripts/check-achievements.mjs
  */
-import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, HARVEST, THRICE, earnedMask, emptyTally, holds } from '../public/achievements.js';
+import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, earnedMask, emptyTally, holds } from '../public/achievements.js';
 import { FIELD_NAMES as MAP_NAMES, FIELD_SLACK as MAP_SLACK } from '../public/fields.js';
 
 const problems = [];
@@ -21,7 +21,7 @@ if (FIELD_NAMES.join('|') !== MAP_NAMES.join('|')) {
   problems.push(`field names differ from the map:\n    table: ${FIELD_NAMES.join(', ')}\n    map:   ${MAP_NAMES.join(', ')}`);
 }
 
-// The Slack a Harvest forgives is the Slack the Tracker forgives.
+// The Slack the Lawn forgives is the Slack the Tracker forgives.
 if (FIELD_SLACK !== MAP_SLACK) {
   problems.push(`the Slack differs from the map: table ${FIELD_SLACK}, map ${MAP_SLACK}`);
 }
@@ -46,7 +46,7 @@ if (earnedMask(nothing) !== 0) problems.push('a Mower that has done nothing hold
 // Everything is earned by a Mower that has done everything.
 const everything = {
   c: Math.max(...BLADE_STEPS),
-  h: FIELD_NAMES.map(() => Math.max(HARVEST, THRICE)),
+  q: FIELD_NAMES.map(() => THRICE),
   d: Math.max(...DRIVE_STEPS),
   b: Math.max(...BUMP_STEPS),
 };
@@ -63,18 +63,18 @@ for (const [what, steps] of [['blades', BLADE_STEPS], ['tiles driven', DRIVE_STE
   }
 }
 
-// A Harvest of one Field is not a Harvest of another.
+// Being there for one Field is not being there for another.
 for (let field = 0; field < FIELD_NAMES.length; field++) {
-  const one = { ...emptyTally(), h: FIELD_NAMES.map((_, k) => (k === field ? HARVEST : 0)) };
+  const one = { ...emptyTally(), q: FIELD_NAMES.map((_, k) => (k === field ? 1 : 0)) };
   const mask = earnedMask(one);
   const earned = ACHIEVEMENTS.filter((a) => holds(mask, a.bit)).map((a) => a.name);
   if (earned.length !== 1 || earned[0] !== FIELD_NAMES[field]) {
-    problems.push(`one Harvest of ${FIELD_NAMES[field]} earns ${earned.length ? earned.join(', ') : 'nothing'}`);
+    problems.push(`one finish of ${FIELD_NAMES[field]} earns ${earned.length ? earned.join(', ') : 'nothing'}`);
   }
 }
 
 console.log(`${ACHIEVEMENTS.length} achievements on ${byBit.size} bits, highest bit ${Math.max(...byBit.keys())}`);
-console.log(`one Harvest is ${HARVEST} of a Field; three are ${THRICE.toFixed(2)}`);
+console.log(`a Field is earned by being there once, and "It Grew Back" by being there ${THRICE} times`);
 for (const achievement of ACHIEVEMENTS) {
   console.log(`  ${String(achievement.bit).padStart(2)}  ${achievement.name.padEnd(18)} ${achievement.blurb}`);
 }

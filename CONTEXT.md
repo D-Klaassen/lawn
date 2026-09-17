@@ -64,12 +64,9 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   Mower took, so tall grass is worth more than stubble.
 - **Achievement** — a thing the Lawn saw one Mower do, kept for ever under the
   Mower Key beside the Score. The Lawn awards it; a Mower never claims one.
-- **Harvest** — a whole Field's worth of Blade Height, less the Slack, taken
-  off that Field by one Mower. It is not the Field reading 100% on the
-  Tracker: the Tracker says how the Field stands, which is everybody's work,
-  and a Harvest says what one Mower took off it, which is nobody else's. It is
-  measured against the size of its own Field, so a small Field is not a
-  cheaper Achievement.
+- **Crowning** — the giving of a Field's Achievement to every Mower standing
+  in that Field at the moment it is finished. The Lawn judges both: whether
+  the Field is cut, and who is in it.
 - **Snapshot** — how far each Tile is through its Cycle, from 0 to
   `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Cycle, so
   the wire carries the fraction and not the age in seconds. The wire therefore
@@ -610,21 +607,30 @@ Mow Stroke, so the Lawn does less work than before, not more.
 ## What the Lawn can vouch for, and what it cannot
 
 A Field reading 100% on the World Quest Tracker is worked out on the client,
-over every Tile of the Field, and the Lawn never sees it. An Achievement hung
-on it would be an Achievement a rewritten client awards itself.
+over every Tile of the Field. An Achievement hung on the client's word would be
+an Achievement a rewritten client awards itself.
 
-The Harvest is what stands in its place, and it is the better Achievement for
-being personal. It takes the Slack with it, for the reason the Tracker does and
-for a second reason besides: a Mow Stroke is a capsule and a Field boundary is
-a curve, so a Mower that drives the whole parcel in rows four Tiles apart takes
-99.8% of it off and no more — measured, and twice, because the first reading
-was mistaken for a bug. Asking for the last blade would make the perfect drive
-fall short, which is worse than searching for a tuft. The Lawn already knows the Blade Height of every Tile it cuts
-and which Field that Tile is in, so a Harvest costs it nothing — no scan of
-twelve thousand Tiles, no ledger of who cut what, and nothing to leech: a Mower
-that drives into a Field at 99% and cuts the last tuft has cut one tuft, and
-the Lawn says so. It also survives the Regrowth, which is what makes cutting
-one Field three times a thing a Mower can set out to do.
+So the Lawn works the same sum out for itself. It already holds the moment
+every Tile was mown and the Growth Rate of each one, so `fieldStanding` is
+`fieldProgress` from `public/fields.js` with the same Slack and the same
+stubble allowance, over the Tiles of one Field. Those two must stay identical,
+for a sharper reason than the others: the flare, the banner and the card are
+one moment, and a Lawn that called the finish differently would put the medal a
+second to one side of the thing it belongs to.
+
+Reading a Field is some eleven thousand Tiles. That is cheap but not free, so
+the Lawn reads a Field only when a Mow Stroke has just taken grass off it, and
+then at most every `FIELD_CHECK_MS` — except when the last reading put that
+Field above `FIELD_NEARLY`, when it reads every time. The stroke that takes the
+last of a Field may be the last stroke anybody makes there, so the reading that
+matters most is the one that must never be skipped.
+
+Only the crossing counts. A Field stays finished until the Regrowth takes it
+back under the line, and then it can be finished, and crowned, all over again —
+which is what makes standing in one Field for three finishes a thing a Mower
+can set out to do. The first reading of a Field crowns nobody: a Lawn waking
+beside a Field that was finished while it slept would otherwise hand out medals
+for somebody else's afternoon.
 
 A Bump the Lawn is only told about is the other hole. The daze is still relayed
 on the Mower's word, because a Mower only ever dazes itself and a liar wearing
@@ -644,23 +650,26 @@ do. The ladders are short for that reason.
 
 An Emote cannot be made honest at all, so nothing is hung on one.
 
-## A Harvest is kept in blades, because a fraction cannot be rounded
+## Being there is the whole of the test
 
-The Lawn holds the blades it took off each Field, not the Harvest itself, and
-divides only when it reads them. That is not tidiness; a fraction there is
-wrong.
+A Field is earned by standing in it as the last of it is cut. Not by cutting a
+Field's worth of grass yourself, which was tried first and dropped.
 
-Every running total is rounded before it is written down, because a Score is
-one storage value for every Mower and the last decimal places of a distance are
-bytes spent on nothing. A Harvest grows by about a two-thousandth of a Field per
-Mow Stroke, so rounding it to four decimals throws away a part of every one of
-those thousands of steps, and the ones too small to reach the last decimal are
-thrown away whole. Measured: a drive that took 11,520 blades off a Field of
-11,523 recorded a Harvest of 0.93.
+The reason is the moment. A Field finishing already lights the parcel up, drops
+the banner and counts the Fields cut; hanging the Achievement on a private tally
+put a second, unrelated celebration a few minutes to one side of that, for work
+nobody could see being done. Now one thing happens: the ground flares, the
+banner falls, and the card arrives for everyone who was there.
 
-Blades are a number of order ten thousand and grow by about six a Mow Stroke,
-so the same rounding is nothing at all. The rule this leaves is worth keeping:
-round the big number, never the fraction built out of it.
+The cost is that the Lawn does not ask who cut what. A Mower that drives into a
+Field at 99% is crowned beside the Mower that cut the parcel, and a Mower parked
+in the right Field at the right moment is crowned having cut nothing at all —
+it does not even need a Score yet; `crownField` opens one for it. That is a real
+hole and it is left open on purpose, because closing it means a ledger of who
+cut how much of every Field since it last grew back, and a share big enough to
+keep a leech out is a share big enough to rob the ninth Mower of a nine-way cut.
+What it costs is the value of one medal to the Mower who did not earn it. What
+it buys is that the medal lands with the flare.
 
 ## An Achievement outlives a Score
 
@@ -695,6 +704,25 @@ The heading now counts what the board counts: the Mowers that have spoken,
 and you. The server still says how many sockets it holds, in the hello and in
 a `mowers` message, because that is the honest answer to a different question
 and it is what the address count is made of. Nothing on the screen uses it.
+
+## The board wears the medals
+
+Every name on the board carries a star with a number in it: how many
+Achievements that Mower holds. The board is built from presence, so anything
+the board says about a Mower has to arrive with that Mower — the count
+therefore rides on the report, beside the tally, and is worked out from the
+mask the Lawn already holds. It is the count and not the mask, because the
+board shows a number and a number is eight bytes where a mask is thirteen.
+
+Your own star is counted on your own screen instead of waited for, because the
+Lawn tells you what you hold the moment it awards it, and the board should not
+be the one place that lags a report behind the card.
+
+The star is a chunky one — its inner points stand at 55% of the outer radius
+rather than the usual 38% — because a star of ordinary sharpness has no width
+at its waist to carry two digits, and twenty-two of them can be earned. The
+slot stays when a Mower has earned nothing, so the names stand in one column
+whatever anybody holds.
 
 ## Agreement between client and server
 
