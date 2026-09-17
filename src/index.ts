@@ -292,7 +292,7 @@ const BUMP_RATE = 1;
  */
 const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
-const EMOTE_COUNT = 4;
+const EMOTE_COUNT = 5;
 const STORAGE_KEY = "mownAt";
 /**
  * The Tiles are one array, and a storage value holds at most 128 KiB, so the
