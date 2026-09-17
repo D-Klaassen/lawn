@@ -12,3 +12,6 @@ public/ball.js
 
 # Shared Achievement table, built before dev and deploy.
 public/achievements.js
+
+# Shared tree landmarks, built before dev and deploy.
+public/trees.js

@@ -1,3 +1,5 @@
+import { treeAt, treeEarthAt, EARTH_RADIUS, TREES } from './trees.js';
+
 /**
  * The map of the Lawn.
  *
@@ -99,7 +101,7 @@ export function placeAt(x, y, width, height) {
     wet = Math.max(wet, water(shore, along - BRIDGE));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  return { field: edge <= lane || wet > -BANK ? -1 : first, wet };
+  return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
 }
 
 /**
@@ -125,9 +127,9 @@ export function wetAt(x, y, width, height) {
   return placeAt(x, y, width, height).wet;
 }
 
-/** Water a Mower of this radius cannot drive into. */
+/** Banks and trunks a Mower of this radius cannot drive into. */
 export function blocked(x, y, width, height, radius) {
-  return wetAt(x, y, width, height) > -radius;
+  return wetAt(x, y, width, height) > -radius || treeAt(x, y, width, height, radius);
 }
 
 /**
@@ -146,7 +148,7 @@ export function dryStart(width, height, x = width / 2, y = height / 2, radius = 
     const py = y + Math.sin(angle) * ring * 2.5;
     if (px < radius || py < radius || px > width - radius || py > height - radius) continue;
     const place = placeAt(px, py, width, height);
-    if (place.wet > -radius) continue;
+    if (place.wet > -radius || treeAt(px, py, width, height, radius)) continue;
     if (place.field >= 0) return { x: px, y: py };
     dry = dry ?? { x: px, y: py };
   }
@@ -296,7 +298,18 @@ fn pathGrass(p : vec2f) -> f32 {
   // The bank is bare to BANK Tiles from the water, the same answer placeAt
   // gives, and the grass then comes in over the same width as a verge.
   let bank = smoothstep(BANK, BANK + 1.8, -place.y + fringe);
-  return min(lane, bank);
+  var earth = 1.0;
+  for (var i = 0u; i < ${TREES.length}u; i++) {
+    let tree = TREE_PLACES[i];
+    let delta = p - tree.xy * C.misc2.xy;
+    let angle = atan2(delta.y, delta.x);
+    let seed = tree.x * 37.0 + tree.y * 19.0;
+    // Match treeEarthAt so the visible edge and mowing totals agree.
+    let edge = (${EARTH_RADIUS.toFixed(2)} + 0.30 * sin(angle * 3.0 + seed)
+      + 0.18 * sin(angle * 5.0 - seed * 2.0) + 0.09 * sin(angle * 9.0 + seed)) * tree.z;
+    earth = min(earth, smoothstep(edge, edge + 0.45, length(delta)));
+  }
+  return min(min(lane, bank), earth);
 }
 
 /** How far a point lies inside the water, in Tiles. Negative on dry ground. */

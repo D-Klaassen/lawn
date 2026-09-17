@@ -20,7 +20,7 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Lane** — the bare seam between two Fields. Nothing grows on it and every
   Mower drives over it.
 - **Ditch** — a seam that carries water instead of a lane. A Mower cannot
-  enter it: it is the one thing on the Lawn that says no.
+  enter it: it stops a Mower at the bank.
 - **Bridge** — the dry crossing that cuts every Ditch, at the middle point
   between the two seeds the Ditch runs between. It is what keeps a Ditch a
   detour and not a wall.
@@ -1004,3 +1004,14 @@ healthy. The HUD is a separate canvas and stays sharp throughout.
     npm run dev        # wrangler dev on port 8788
     npm run typecheck
     npm run deploy
+
+## Trees
+
+`src/trees.ts` defines nine trees, one inside each Field. The client and server
+share their positions and trunk radii through the same build pattern as the
+ball. Mowers slide around trunks; restored positions avoid them too. Crowns
+are faceted clusters that cast shadows. Where a tree stands between the camera
+and the local Mower, a soft screen-door cutout reveals the Mower and nearby
+grass without needing to sort transparent faces. Shadows remain solid. A small
+earth ring surrounds each trunk; its shared radius excludes it from grass and
+quest totals, while the shader blends its edge back into the lawn.
