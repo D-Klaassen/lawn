@@ -297,12 +297,13 @@
     font-variant-numeric: tabular-nums;
   }
   #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
-  #board-list li span:last-child { color: #e8cd80; }
+  #board-list li > span:last-child { color: #e8cd80; }
   /* How many Achievements a Mower holds, in a star at the front of its name.
      The star keeps its place when it is empty, so the names stand in one
      column whatever anybody has earned. */
   #board-list li { align-items: center; }
   #board-list li .board-name { flex: 1; min-width: 0; }
+  #board-list li .board-star { margin-right: 2px; }
   .board-star {
     flex: 0 0 27px; height: 27px; position: relative; isolation: isolate;
     /* The number sits a little above the middle, because that is where a
@@ -1405,7 +1406,10 @@ function refreshBoard() {
     name.textContent = r.name;
     const score = document.createElement("span");
     score.textContent = r.score.toLocaleString();
-    li.append(star, name, score);
+    // The star goes beside the tally and not in front of the name. At the
+    // front it is the first number on the row, which reads as a placing — and
+    // it is not one, so on a board sorted by Score it runs the wrong way.
+    li.append(name, star, score);
     return li;
   }));
 }
@@ -2406,8 +2410,11 @@ fn fs_blade(i : VSOut) -> @location(0) vec4f {
 
   var base = mix(vec3f(0.20, 0.43, 0.08), vec3f(0.42, 0.67, 0.17), i.tint);
   base = mix(base * 0.72, base, smoothstep(0.0, 0.45, i.t));
-  base = mix(base, vec3f(0.68, 0.89, 0.32), smoothstep(0.35, 1.0, i.t) * 0.65);
-  let turf = mix(vec3f(0.38, 0.55, 0.18), vec3f(0.43, 0.60, 0.22), i.tint);
+  base = mix(base, vec3f(0.62, 0.84, 0.30), smoothstep(0.35, 1.0, i.t) * 0.42);
+  // A cut blade is pale. It was, and then it was not: turf the same green as
+  // the grass around it makes a swath you cannot find, and a Mower that cannot
+  // see what it has cut reads its own Score going up as a fault.
+  let turf = mix(vec3f(0.56, 0.74, 0.28), vec3f(0.64, 0.81, 0.34), i.tint);
   base = mix(base, turf, i.cut);
 
   let ao = mix(mix(0.70, 1.0, smoothstep(0.0, 0.65, i.t)), 1.0, i.cut);
@@ -2449,7 +2456,7 @@ fn groundColour(w : vec2f) -> vec3f {
   let soil = vec3f(0.20, 0.40, 0.13);
   // A real lawn stripes because the deck lays the grass over. Same here.
   let stripe = 0.5 + 0.5 * cutSmooth(w).x;
-  let cutG = mix(vec3f(0.36, 0.53, 0.17), vec3f(0.43, 0.60, 0.22), stripe)
+  let cutG = mix(vec3f(0.49, 0.67, 0.25), vec3f(0.58, 0.76, 0.31), stripe)
            * (1.0 + grain * 0.07);
   var col = mix(soil, cutG, 1.0 - smoothstep(0.0, 0.85, h));
   let dirt = mix(vec3f(0.22, 0.12, 0.065), vec3f(0.34, 0.22, 0.12),
@@ -2938,8 +2945,12 @@ function mowerMesh() {
         return centre.map((x, k) => x + r * (u[k] * Math.cos(angle) + v[k] * Math.sin(angle)));
       })), material);
   }
-  body(0.05, 1.7, 1.35, [[0.19, 0.9], [0.24, 1], [0.36, 1], [0.47, 0.86]], 0);
-  body(0.05, 1.74, 1.39, [[0.18, 0.93], [0.24, 1]], 1);
+  // The deck is as wide as the Mower is allowed to be — `COLLISION_RADIUS` is
+  // 0.85 of the scale — so the machine looks like something that could leave
+  // the swath behind it. The blades still overhang it by a third of a Tile
+  // either side, which is what a deck does.
+  body(0.05, 1.7, 1.7, [[0.19, 0.9], [0.24, 1], [0.36, 1], [0.47, 0.86]], 0);
+  body(0.05, 1.74, 1.74, [[0.18, 0.93], [0.24, 1]], 1);
   body(-0.12, 0.8, 0.77, [[0.46, 1], [0.68, 0.94], [0.78, 0.72]], 1);
   tube([-0.12, 0.78, 0], [-0.12, 0.81, 0], 0.22, 3, 16);
   for (const x of [-0.57, 0.61]) for (const side of [-1, 1]) {
@@ -3474,7 +3485,7 @@ function drawWheelWake(cw, ch, dpr) {
   // handle open so the trail reaches the tyre contact patches.
   for (const mower of allMowers()) {
     const ca = Math.cos(mower.a), sa = Math.sin(mower.a);
-    const parts = [[-0.82, 0.92, 0.18, 0.47, -0.69, 0.69],
+    const parts = [[-0.82, 0.92, 0.18, 0.47, -0.85, 0.85],
       [-0.52, 0.28, 0.47, 0.81, -0.385, 0.385]];
     for (const axle of [-0.57, 0.61]) for (const side of [-1, 1]) {
       const r = axle < 0 ? 0.29 : 0.23;

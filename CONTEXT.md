@@ -869,6 +869,36 @@ a blade has no Score, so the Lawn issues it a fresh Key every visit; each reload
 is therefore a new Mower arriving, and the corner says so. It closes itself the
 moment that Mower moves, because moving is what writes its record.
 
+## A cut blade is pale, or the Score reads as a fault
+
+A Mower reported that its Score climbed while it was mowing nothing. It was
+not: the Lawn counts the blades it takes off, and standing still takes none —
+measured, on both sides, a Mower that stands still gains nothing and one that
+re-drives ground it has already cut gains nothing either.
+
+What had happened is that the swath went invisible. Cut turf had come to sit at
+the same green as the grass around it while standing grass grew bright tips, so
+a Mower could not find what it had already done, drove over standing grass
+believing it was cut, and read its own Score going up as a fault.
+
+So cut turf is pale again, on the blade and on the ground under it, and
+standing grass is deeper than it was. The one on the screen that is brightest
+should be the one that has been cut: that is what a mown lawn looks like, and
+it is the only thing that tells a Mower where it has been.
+
+## The deck should look like it could cut the swath
+
+A Mow Stroke is `MOW_RADIUS` and the swath is therefore 5.2 Tiles wide. The
+deck was 3.5, so a Mower left a swath half again its own width behind it and
+plainly did not look like the thing that cut it.
+
+The deck is now as wide as the Mower is allowed to be — `COLLISION_RADIUS` is
+0.85 of `MOWER_SCALE`, so the body is 4.4 Tiles across. It cannot be made wider
+without either making it clip the things it is not allowed to touch, or moving
+`COLLISION_RADIUS`, which is what every gap on the Lawn was measured against.
+The blades still overhang it by a third of a Tile either side, which is what a
+deck does.
+
 ## The board wears the medals
 
 Every name on the board carries a star with a number in it: how many
@@ -877,6 +907,10 @@ the board says about a Mower has to arrive with that Mower — the count
 therefore rides on the report, beside the tally, and is worked out from the
 mask the Lawn already holds. It is the count and not the mask, because the
 board shows a number and a number is eight bytes where a mask is thirteen.
+
+The star stands beside the tally and not in front of the name. In front it is
+the first number on the row, which reads as a placing — and it is not one, so
+on a board sorted by Score it appears to run the wrong way.
 
 Your own star is counted on your own screen instead of waited for, because the
 Lawn tells you what you hold the moment it awards it, and the board should not
