@@ -73,8 +73,22 @@
        publishes `--map-top` whenever it moves. The 24px is the tracker's own
        background, which hangs 14px below its box, and a gap under that. */
     --quest-floor: calc(var(--map-top, 150px) + var(--keys-height) + 24px);
+    /* What the middle of the bottom has already spoken for: the tally, the
+       line over it, and the room the score is placed with. It is built from
+       the score's own numbers, so anything standing over the score moves when
+       the score does — a gap in fixed pixels is a gap that closes on some
+       window nobody tried. */
+    --score-floor: calc(38px + var(--safe-bottom) + clamp(24px, 3.1vw, 42px) + 30px);
   }
-  body.touch { --keys-height: 0px; }
+  body.touch {
+    --keys-height: 0px;
+    /* What the bottom of a touch screen has already spoken for: the stick
+       zone on the left, and the column of buttons standing over the map on
+       the right. Whichever reaches higher is the floor, because a card below
+       it is a card under a thumb. The column is three 52px buttons and two
+       10px gaps over the 12px it sits off the map. */
+    --thumb-floor: max(min(42dvh, 330px), calc(var(--map-top, 150px) + 188px));
+  }
   #keys {
     /* One row, on the middle of the map. The map's right edge stands at the
        same 16px margin the map is drawn with and its left edge is
@@ -276,21 +290,71 @@
   .award.earned .award-mark { color: #c6efa0; }
   .award.earned .award-name { color: #ecd16b; }
   .award.earned .award-blurb { color: #c6bea0; }
-  /* The card that says one was just earned. It is the Field banner's manner —
-     a thing that arrives, is read from the seat, and leaves on its own. */
+  /* The card that says one was just earned.
+     It stands at the bottom, over the score, because that is where the eye
+     already is while driving — the top of the screen belongs to the Field
+     banner, and the two of them arriving in the same place would read as one
+     thing happening twice. It rises rather than drops, for the same reason.
+
+     Everything else here is noise made on purpose. Earning one of these is
+     rare, so it springs past its size, throws a ring, and takes a sweep of
+     light across the gold: the manner of the Emote card and the triumph
+     banner, turned up. All of it stands still for a visitor who asks for
+     less motion. */
   #award-toast {
-    position: fixed; z-index: 13; left: 50%; top: 84px;
-    transform: translate(-50%, -14px); opacity: 0;
-    transition: opacity .35s ease, transform .35s cubic-bezier(.2, 1.4, .4, 1);
-    pointer-events: none; text-align: center;
-    width: min(420px, 84vw); padding: 12px 20px 14px;
-    background: rgba(20, 32, 14, .94); border: 1px solid rgba(232, 205, 128, .5);
-    border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+    position: fixed; z-index: 13; left: 50%;
+    bottom: calc(var(--score-floor) + 28px);
+    transform: translate(-50%, 22px) scale(.88); opacity: 0;
+    transition: opacity .3s ease, transform .44s cubic-bezier(.2, 1.6, .35, 1);
+    pointer-events: none; text-align: center; overflow: hidden;
+    /* Wide, but never as far as the map. The card is centred and the map is
+       `--map-side` in from the right, so half the card must stop short of
+       that — measured from the map itself, the way everything else in that
+       corner is, and not from a width that happens to clear it on this
+       window. It stops narrowing at the point where reading it would suffer;
+       below that the small layout takes over anyway. */
+    width: min(420px, 84vw, max(250px, calc(100vw - 2 * var(--map-side, 220px) - 34px)));
+    padding: 13px 22px 15px;
+    background:
+      radial-gradient(120% 140% at 50% 120%, #f4d56e1f 0%, #f4d56e00 62%),
+      rgba(20, 32, 14, .95);
+    border: 1px solid rgba(232, 205, 128, .5);
+    border-radius: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
     text-shadow: 0 1px 3px #14200e;
   }
-  #award-toast.visible { opacity: 1; transform: translate(-50%, 0); }
-  #award-toast-name { margin-top: 5px; font: 700 21px/1.2 Georgia, serif; color: #fff0be; }
-  #award-toast-blurb { margin-top: 4px; font-size: 11px; letter-spacing: .02em; color: #c6bea0; }
+  #award-toast.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  /* A thumb drives from the bottom of the screen, so the card stands off it.
+     This holds on a tablet too, where the window is wide enough to keep the
+     rest of the large layout. */
+  body.touch #award-toast { bottom: calc(var(--thumb-floor) + 10px); }
+  /* The ring that leaves the card the moment it lands. It is a box-shadow and
+     not a child, so `overflow: hidden` clips the sweep without clipping it. */
+  #award-toast.visible { animation: award-ring 1s cubic-bezier(.2, .8, .3, 1); }
+  @keyframes award-ring {
+    from { box-shadow: 0 10px 40px rgba(0,0,0,.45), 0 0 0 0 #f4d56ec2, 0 0 22px 2px #f4d56e8a; }
+    to { box-shadow: 0 10px 40px rgba(0,0,0,.45), 0 0 0 30px #f4d56e00, 0 0 22px 2px #f4d56e00; }
+  }
+  /* One sweep of light across the card, a beat after it lands. */
+  #award-toast::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(72deg, #fff0 38%, #fff6d244 48%, #ffffff5e 52%, #fff6d244 56%, #fff0 66%);
+    transform: translateX(-130%); pointer-events: none;
+  }
+  #award-toast.visible::after { animation: award-sweep .9s cubic-bezier(.3, .5, .2, 1) .16s; }
+  @keyframes award-sweep { to { transform: translateX(130%); } }
+  #award-toast .quest-label { color: #f4d56e; }
+  #award-toast-name {
+    margin-top: 6px; font: 700 23px/1.2 Georgia, serif;
+    /* The gold runs through the name once, left to right, as it arrives. */
+    background: linear-gradient(100deg, #f0c85e 0%, #fff6d2 38%, #fffffc 50%, #fff6d2 62%, #f0c85e 100%);
+    background-size: 260% 100%; background-position: 170% 0;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 2px 14px #f0c85e5c) drop-shadow(0 1px 2px #172311);
+  }
+  #award-toast.visible #award-toast-name { animation: award-shimmer 1.5s ease-out .1s both; }
+  @keyframes award-shimmer { from { background-position: 170% 0; } to { background-position: -50% 0; } }
+  #award-toast-blurb { margin-top: 5px; font-size: 11px; letter-spacing: .02em; color: #cfc7a8; }
 
   /* ------------------------------------------------------------------ *
    * touch controls
@@ -377,8 +441,10 @@
     #awards-list { max-height: 52dvh; }
     .award { padding: 6px; gap: 8px; }
     .award-name { font-size: 13px; }
-    #award-toast { top: calc(100px + var(--safe-top)); width: min(88vw, 400px); }
-    #award-toast-name { font-size: 18px; }
+    /* The score has gone to the top on a screen this small, so the card
+       clears the map and the stick instead. */
+    #award-toast { bottom: calc(var(--quest-floor) + 6px); width: min(88vw, 400px); }
+    #award-toast-name { font-size: 19px; }
   }
   @media (max-height: 560px) and (max-width: 1000px) {
     #stick-zone { height: min(64dvh, 260px); }
@@ -390,6 +456,9 @@
   @media (prefers-reduced-motion: reduce) {
     #field-banner, #award-toast { transition: none; }
     #field-banner.triumph.visible { animation: none; }
+    #award-toast.visible, #award-toast.visible::after,
+    #award-toast.visible #award-toast-name { animation: none; }
+    #award-toast-name { background-position: 60% 0; }
     #field-meter::-webkit-progress-value { transition: none; }
     #stick, #stick-knob, .touch-btn { transition: none; }
     #emote-row .touch-btn { animation: none; }
@@ -1204,6 +1273,12 @@ function nextAward() {
   if (!achievement) { awardToast.classList.remove("visible"); return; }
   awardToastName.textContent = achievement.name;
   awardToastBlurb.textContent = achievement.blurb;
+  // Take the card away and put it back, so the second Achievement of a pair
+  // springs, rings and catches the light exactly as the first one did. An
+  // animation only starts again on an element that went away, and reading
+  // `offsetWidth` between the two is what makes the browser believe it did.
+  awardToast.classList.remove("visible");
+  void awardToast.offsetWidth;
   awardToast.classList.add("visible");
   awardTimer = setTimeout(nextAward, AWARD_MS);
 }
