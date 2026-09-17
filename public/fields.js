@@ -195,15 +195,18 @@ export function fieldProgress(tiles, heightAt) {
  * honest: both read the Lawn the same way `placeAt` does, so neither can draw
  * a path that is not there.
  */
-export function buildMapImage(width, height, scale = 2) {
+export function buildMapImage(width, height, done = [], scale = 2) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(width * scale);
   canvas.height = Math.round(height * scale);
   const g = canvas.getContext('2d');
   const image = g.createImageData(canvas.width, canvas.height);
   const px = image.data;
-  // A parcel of its own green, so one Field is read from the next.
-  const greens = SEEDS.map((_, i) => [
+  // A parcel of its own green, so one Field is read from the next. A Field
+  // that is finished is the pale, warm green of grass that has just been cut,
+  // which is the same thing the Lawn itself says about ground a Mower has
+  // been over: the map fills up as the Lawn comes in.
+  const greens = SEEDS.map((_, i) => done[i] ? [150, 194, 108] : [
     78 + (i % 3) * 7 - (i / 3 | 0) * 4,
     108 + ((i * 5) % 4) * 9,
     52 + (i % 2) * 8,
@@ -302,24 +305,45 @@ fn waterAt(p : vec2f) -> f32 {
 }
 `;
 
-export function createFieldQuests() {
+/**
+ * The tracker. `onComplete` is called the moment a Field is finished, because
+ * the reward for finishing one belongs on the Lawn where the Mower is
+ * looking, and the Lawn is drawn by the client and not by this file.
+ */
+export function createFieldQuests(onComplete = () => {}) {
   const banner = document.getElementById('field-banner');
   const bannerTitle = document.getElementById('field-banner-name');
   const bannerLabel = document.getElementById('field-banner-label');
+  const bannerTally = document.getElementById('field-banner-tally');
   const list = document.getElementById('world-quest-list');
   const here = document.getElementById('world-quest-here');
   const done = document.getElementById('world-quest-done');
   let width = 0, height = 0, fields = [];
   let rows = [];
   let active = -1, candidate = -1, candidateSince = 0, checkedAt = -Infinity;
+  /**
+   * Whether the tracker has read the Lawn once. What it finds on that first
+   * reading is what the Mower arrived to — Fields other people finished, or
+   * this Mower finished yesterday — and none of it is worth a fanfare. Only
+   * what is finished after that is.
+   */
+  let arrived = false;
   let hideBanner;
 
-  function announce(name, label) {
+  /**
+   * The banner says two different things and used to say them the same way.
+   * Walking into a Field and finishing one are not the same event, and the
+   * second one is the only thing on this Lawn a Mower can finish, so it gets
+   * the gold, the tally and longer on the screen.
+   */
+  function announce(name, label, tally = '') {
     clearTimeout(hideBanner);
     bannerTitle.textContent = name;
     bannerLabel.textContent = label;
+    bannerTally.textContent = tally;
+    banner.classList.toggle('triumph', Boolean(tally));
     banner.classList.add('visible');
-    hideBanner = setTimeout(() => banner.classList.remove('visible'), 3200);
+    hideBanner = setTimeout(() => banner.classList.remove('visible'), tally ? 4600 : 3200);
   }
 
   return {
@@ -329,6 +353,7 @@ export function createFieldQuests() {
       fields = buildFields(w, h);
       active = candidate = -1;
       checkedAt = -Infinity;
+      arrived = false;
       rows = fields.map(field => {
         const row = document.createElement('li');
         row.className = 'world-quest';
@@ -336,11 +361,19 @@ export function createFieldQuests() {
         row.querySelector('.world-quest-title').textContent = field.name;
         const meter = row.querySelector('progress');
         meter.setAttribute('aria-label', `${field.name} grass cut`);
-        return { row, meter, badge: row.querySelector('.world-quest-badge'), status: row.querySelector('.world-quest-status'), percent: row.querySelector('.world-quest-percent'), completed: false };
+        return { row, meter, badge: row.querySelector('.world-quest-badge'), status: row.querySelector('.world-quest-status'), percent: row.querySelector('.world-quest-percent'), completed: false, value: 0 };
       });
       list.replaceChildren(...rows.map(({ row }) => row));
       here.textContent = '';
       done.textContent = `0 / ${fields.length} completed`;
+    },
+    /**
+     * How far each Field is, in the order the Fields are named. The map draws
+     * this, so a Field reads the same on the map as it does in the tracker:
+     * there is one answer and both of them show it.
+     */
+    standing() {
+      return rows.map((quest, id) => ({ name: fields[id].name, percent: quest.value, completed: quest.completed }));
     },
     update(x, y, now, heightAt) {
       const next = fieldAt(x, y, width, height);
@@ -362,6 +395,7 @@ export function createFieldQuests() {
         // Reserve 100% for completion, even when the remaining grass rounds away.
         const percent = complete ? 100 : Math.min(99, Math.floor(value + 1e-7));
         quest.meter.value = value;
+        quest.value = percent;
         quest.percent.textContent = `${percent}%`;
         if (id === active) here.textContent = `${fields[id].name} ${percent}%`;
         if (!complete) return;
@@ -369,8 +403,13 @@ export function createFieldQuests() {
         quest.row.classList.add('completed');
         quest.badge.textContent = '✓';
         quest.status.textContent = 'Completed';
-        announce(fields[id].name, 'World quest completed');
+        if (!arrived) return;
+        const cut = rows.filter(one => one.completed).length;
+        announce(fields[id].name, 'Field complete',
+          cut === fields.length ? 'The whole Lawn is cut' : `${cut} of ${fields.length} Fields cut`);
+        onComplete(id, cut, fields.length);
       });
+      arrived = true;
       done.textContent = `${rows.filter(quest => quest.completed).length} / ${fields.length} completed`;
     },
   };
