@@ -208,6 +208,20 @@
   #field-banner-label { font-size: 1.5cqw; line-height: 1.2; letter-spacing: .12em; white-space: nowrap; }
   #field-banner.visible { opacity: 1; transform: translate(-50%, 0); }
   #field-banner-name { margin: 0; font-family: Georgia, serif; font-weight: 700; line-height: 1.1; font-size: 4.5cqw; white-space: nowrap; color: #fff0be; }
+  #field-banner-tally { font-size: 1.5cqw; line-height: 1.2; letter-spacing: .1em; white-space: nowrap; color: #f6e6a6; }
+  #field-banner-tally:empty { display: none; }
+  /* Finishing a Field is the one thing on this Lawn that can be finished, and
+     it used to look exactly like walking into one. It now arrives in gold,
+     out of nothing, and holds a second and a half longer. */
+  #field-banner.triumph #field-banner-art { filter: drop-shadow(0 6px 18px #f3d06a55) saturate(1.25) brightness(1.12); }
+  #field-banner.triumph #field-banner-label { color: #ffdf8a; }
+  #field-banner.triumph #field-banner-name { color: #fff6d2; text-shadow: 0 2px 22px #f0c85e88, 0 1px 3px #172311; }
+  #field-banner.triumph.visible { animation: banner-triumph .72s cubic-bezier(.2, 1.5, .4, 1); }
+  @keyframes banner-triumph {
+    from { transform: translate(-50%, 0) scale(.82); opacity: 0; }
+    60% { transform: translate(-50%, 0) scale(1.06); }
+    to { transform: translate(-50%, 0) scale(1); opacity: 1; }
+  }
   body:has(#field-banner.visible) #help { visibility: hidden; }
   #board {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -375,15 +389,26 @@
   }
   @media (prefers-reduced-motion: reduce) {
     #field-banner, #award-toast { transition: none; }
+    #field-banner.triumph.visible { animation: none; }
     #field-meter::-webkit-progress-value { transition: none; }
     #stick, #stick-knob, .touch-btn { transition: none; }
     #emote-row .touch-btn { animation: none; }
   }
+  #sound-toggle {
+    position: fixed; top: calc(12px + var(--safe-top)); left: 12px;
+    z-index: 25; min-height: 44px; padding: 0 13px;
+    border: 1px solid #f4ffca55; border-radius: 22px;
+    background: #1c2a14df; color: #f4ffca; font: 600 12px system-ui;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #sound-toggle:focus-visible { outline: 2px solid #f4ffca; outline-offset: 3px; }
+  @media (max-width: 700px) { #sound-toggle { top: calc(38px + var(--safe-top)); left: 8px; padding: 0 10px; } }
 </style>
 </head>
 <body>
 <canvas id="gpu"></canvas>
 <canvas id="hud"></canvas>
+<button id="sound-toggle" type="button" aria-pressed="false" aria-label="Enable mower sound">Sound off</button>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
 <div id="keys">
@@ -399,7 +424,7 @@
 </aside>
 <div id="field-banner" role="status">
   <img id="field-banner-art" src="/assets/field-entry-banner.png" width="2172" height="724" alt="" />
-  <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div></div>
+  <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div><div id="field-banner-tally"></div></div>
 </div>
 <aside id="board" hidden aria-label="Mowers on the Lawn">
   <span class="quest-label">On the Lawn &middot; this visit</span>
@@ -429,11 +454,29 @@
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
+import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
 import { ACHIEVEMENTS, holds } from '/achievements.js';
-const fieldQuests = createFieldQuests();
+/**
+ * A Field has been finished. The tracker says so in the corner, but the
+ * reward belongs on the Lawn: the parcel itself lights up, and the Mower
+ * throws a handful of gold over the last of it.
+ */
+function celebrateField(id) {
+  mapStaleAt = performance.now();   // the map is out of date from this moment
+  if (reducedMotion.matches) return;
+  // The light starts at the Mower and not at the middle of the Field. A
+  // Mower finishes a Field at its edge, wherever the last of the grass was,
+  // and a ring out of the middle of the parcel is a ring it may never see.
+  // This one leaves from under the wheels and runs out over the Field.
+  flare = { id, at: performance.now() / 1000, x: me.x, y: me.y };
+  throwClippings(me.x, me.y, me.a, 4, 3);
+}
+
+const fieldQuests = createFieldQuests(celebrateField);
+const mowerSound = createMowerSound(document.getElementById("sound-toggle"));
 /* ------------------------------------------------------------------ *
  * The Lawn: one shared field, one Durable Object, many Mowers.
  * Blade Height is a pure function of the time since a Tile was cut, so
@@ -491,7 +534,13 @@ const MOWER_COL0 = 60 + MOWER_SLOTS * 4;
 const BALL_OFFSET = MOWER_COL0 + MOWER_SLOTS * 4;
 /** Where the lean of the first Mower sits: its pitch, then its roll. */
 const MOWER_LEAN0 = BALL_OFFSET + 8;
-const CAM_FLOATS = MOWER_LEAN0 + MOWER_SLOTS * 4;
+/** The Field that has just been finished: which, when, and where its middle is. */
+const CELEBRATE0 = MOWER_LEAN0 + MOWER_SLOTS * 4;
+const CAM_FLOATS = CELEBRATE0 + 4;
+/** How long a finished Field stays lit, in seconds. */
+const FLARE_SECONDS = 3;
+/** Which Field is alight, the second it finished, and the middle of it. */
+let flare = { id: -1, at: 0, x: 0, y: 0 };
 const SHADOW_SIZE = 1536;
 /** Texels per Tile and Tiles of margin in the ground bake. Mirrors the shader. */
 const GROUND_RES = 4, GROUND_MARGIN = 12;
@@ -575,7 +624,7 @@ function onGrass(x, y) {
   return fieldAt(x, y, W, H) >= 0;
 }
 
-function throwClippings(x, y, heading, amount) {
+function throwClippings(x, y, heading, amount, tint = -1) {
   mowing = Math.min(1, mowing + amount * 0.09);
   const born = performance.now();
   const count = Math.min(18, Math.ceil(amount * 4));
@@ -587,7 +636,7 @@ function throwClippings(x, y, heading, amount) {
       y: y - Math.sin(heading) * 2.5 + Math.cos(heading) * across,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       up: 0.6 + Math.random() * 0.8, born, life: 320 + Math.random() * 220,
-      spin: (Math.random() - 0.5) * 15, tint: Math.floor(Math.random() * 3) });
+      spin: (Math.random() - 0.5) * 15, tint: tint < 0 ? Math.floor(Math.random() * 3) : tint + Math.floor(Math.random() * 2) });
   }
   if (clippings.length > 160) clippings.splice(0, clippings.length - 160);
 }
@@ -813,6 +862,7 @@ function cut(x0, y0, x1, y1, heading, mine) {
     }
   }
   fieldDirty = true;
+  if (mine && len2 > 0.0001) mowerSound.cut(harvested);
   if (mine && harvested > 0.1 && len2 > 0.0001) throwClippings(x1, y1, heading, harvested);
 }
 
@@ -889,10 +939,10 @@ function connect() {
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
-      // Paint the map now, while the Lawn is still arriving. It is the same
-      // walk over every Tile the quests just made, and doing it here keeps it
-      // out of the first frame the Mower asks for the map.
-      mapImage();
+      // The map is not painted here. The tracker reads the Lawn on the first
+      // frame, before the HUD is drawn, so a map painted now is a map that
+      // does not know which Fields are already cut — and it would have to
+      // repaint itself a moment later, in front of the Mower.
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes;
@@ -1580,6 +1630,7 @@ const FIELD_WGSL = `struct Cam {
   ball : vec4f, // x, height, y, radius
   ballRoll : vec4f,
   mowerLean : array<vec4f, ${MOWER_SLOTS}>,   // pitch, roll; z and w spare
+  flare : vec4f,   // the finished Field, the second it finished, and its middle
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -1674,6 +1725,25 @@ fn vnoise(p : vec2f) -> f32 {
 // lanes between them and the Ditches. The ground a Mower drives on and the
 // ground it sees are therefore the same map, and cannot drift apart.
 ${MAP_WGSL}
+
+/**
+ * How brightly a point on a just-finished Field is lit. A ring of light runs
+ * out of the middle of the Field and a warm wash follows it, both gone in
+ * FLARE_SECONDS. It is the whole parcel that answers, so what lights up is
+ * the shape the Mower has just spent its afternoon on.
+ */
+const FLARE_SECONDS = ${FLARE_SECONDS};
+fn fieldFlare(w : vec2f, field : f32) -> f32 {
+  let age = C.misc.x - C.flare.y;
+  if (C.flare.x < 0.0 || field != C.flare.x || age < 0.0 || age > FLARE_SECONDS) { return 0.0; }
+  let t = age / FLARE_SECONDS;
+  // A wide, unhurried ring: it leaves the Mower at 26 Tiles a second, which
+  // is slow enough to be read as a sweep rather than seen as a flash, and it
+  // is still crossing the Field when the wash behind it starts to go.
+  let ring = exp(-pow((length(w - C.flare.zw) - age * 26.0) / 15.0, 2.0));
+  let fade = 1.0 - smoothstep(0.5, 1.0, t);
+  return (ring * 0.80 + 0.22) * fade;
+}
 
 /** The face of the water, for its normal. It drifts with the clock. */
 fn ripple(p : vec2f, t : f32) -> f32 {
@@ -1956,7 +2026,10 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
   let w3 = vec3f(i.w.x, -0.015, i.w.y);
   var n = vec3f(0.0, 1.0, 0.0);
   var base = groundColour(i.w);
-  let depth = waterAt(i.w);
+  let place = placeAt(i.w);
+  let depth = place.y;
+  let lit = fieldFlare(i.w, place.z);
+  base = mix(base, vec3f(0.96, 0.88, 0.48), min(0.42, lit * 0.5));
   let wetness = smoothstep(-0.15, 0.55, depth);
   if (wetness > 0.0) {
     // A face of moving water, from the slope of the ripple either side.
@@ -1979,6 +2052,9 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
   // The sun on the water, and the sky lying on it at a low angle.
   col += C.sunCol.rgb * pow(max(dot(n, midway), 0.0), 48.0) * wetness * 0.85;
   col = mix(col, C.skyCol.rgb, wetness * 0.18 * (1.0 - abs(dot(n, view))));
+  // The light of a finished Field is its own, not the sun's: it is added
+  // after the shading, so it lifts the ground even where the ground is shaded.
+  col += vec3f(1.0, 0.88, 0.5) * lit * 0.26;
   return vec4f(col, 1.0);
 }
 
@@ -2711,6 +2787,8 @@ function render(now, ts, dt) {
   if (ball) {
     C.set([ballVisual.x, ballVisual.z, ballVisual.y, BALL_RADIUS, ballVisual.rollX, ballVisual.rollY, 0, 0], BALL_OFFSET);
   }
+  C[CELEBRATE0] = flare.id; C[CELEBRATE0 + 1] = flare.at;
+  C[CELEBRATE0 + 2] = flare.x; C[CELEBRATE0 + 3] = flare.y;
   F.device.queue.writeBuffer(F.cam, 0, C);
 
   F.device.queue.writeBuffer(F.drawArgs, 0, F.drawReset);
@@ -2822,7 +2900,8 @@ function drawMowing(cw, ch, dpr) {
     g.save();
     g.translate(...p); g.rotate(c.spin * t);
     g.globalAlpha = Math.min(1, (1 - progress) * 3) * (reducedMotion.matches ? 0.45 : 0.9);
-    g.fillStyle = ["#a8cc58", "#d3e88b", "#71993e"][c.tint];
+    // The last two are the gold a finished Field throws.
+    g.fillStyle = ["#a8cc58", "#d3e88b", "#71993e", "#f4d76e", "#fff0b4"][c.tint];
     g.beginPath();
     g.moveTo(-3 * dpr, 0); g.quadraticCurveTo(0, -3 * dpr, 5 * dpr, -dpr);
     g.lineTo(dpr, 2 * dpr); g.closePath(); g.fill();
@@ -3091,13 +3170,20 @@ function mapOrigin(view, world, centre) {
 }
 
 /** The whole map as one picture, painted once per size of Lawn. */
-let mapPicture = null, mapPictureFor = "";
+let mapPicture = null, mapPictureFor = "", mapStaleAt = -Infinity;
 
 function mapImage() {
-  const size = `${W}x${H}`;
-  if (mapPictureFor !== size) {
-    mapPicture = buildMapImage(W, H, 2);
-    mapPictureFor = size;
+  const done = fieldQuests.standing().map(quest => quest.completed);
+  const key = `${W}x${H}:${done.map(one => (one ? 1 : 0)).join("")}`;
+  // Repainting is a walk over every Tile of the Lawn, so a Field finished
+  // just now waits for its own flare to be over before the map takes it in —
+  // and only that. Everything else repaints at once, or a Mower that opens
+  // the page on a Lawn with Fields already cut watches them light up a few
+  // seconds later for no reason it can see.
+  const settled = performance.now() - mapStaleAt > FLARE_SECONDS * 1000 + 400;
+  if (key !== mapPictureFor && (!mapPicture || settled)) {
+    mapPicture = buildMapImage(W, H, done, 2);
+    mapPictureFor = key;
   }
   return mapPicture;
 }
@@ -3156,18 +3242,36 @@ function paintMap(left, top, width, height, viewW, centreX, centreY, dpr, naming
   g.drawImage(picture, originX * perTile, originY * perTile, viewW * perTile, viewH * perTile,
     mapX, mapY, mapW, mapH);
   if (naming > 0) {
+    // A map that names the Fields may as well say how they stand. It is the
+    // tracker's own answer, so the map and the list never disagree, and it is
+    // the one thing a Mower opens the map to find out: where is there left to
+    // cut, and what is already done.
+    const standing = fieldQuests.standing();
+    const size = Math.round(Math.max(11, width * 0.021));
     g.globalAlpha = naming;
-    g.font = `${Math.round(Math.max(11, width * 0.021))}px Georgia, serif`;
     g.textAlign = "center";
-    g.textBaseline = "middle";
     g.strokeStyle = "#1c2a14";
-    g.lineWidth = 3;
     g.lineJoin = "round";
-    g.fillStyle = "#f4ffca";
-    for (const field of fieldCentres()) {
-      const p = point(field.x, field.y);
-      g.strokeText(field.name, ...p);
-      g.fillText(field.name, ...p);
+    for (const [id, field] of fieldCentres().entries()) {
+      const quest = standing[id];
+      const [x, y] = point(field.x, field.y);
+      const done = quest?.completed;
+      // The two lines sit either side of the middle of the Field, so the pair
+      // stands on the Field and not the name alone.
+      g.font = `${size}px Georgia, serif`;
+      g.textBaseline = "bottom";
+      g.lineWidth = 3;
+      g.fillStyle = done ? "#c6efa0" : "#f4ffca";
+      g.strokeText(field.name, x, y);
+      g.fillText(field.name, x, y);
+      if (!quest) continue;
+      g.font = `${Math.round(size * 0.82)}px ui-sans-serif, system-ui, sans-serif`;
+      g.textBaseline = "top";
+      g.lineWidth = 2.5;
+      g.fillStyle = done ? "#c6efa0" : "#d6d2b8";
+      const label = done ? "\u2713 100%" : `${quest.percent}%`;
+      g.strokeText(label, x, y + size * 0.22);
+      g.fillText(label, x, y + size * 0.22);
     }
     g.globalAlpha = 1;
   }
@@ -3289,9 +3393,10 @@ function frame(ts) {
   gapTotal += ts - last;
   gapCount++;
   last = ts;
-  if (!mownAt || !F) return;
+  if (!mownAt || !F) { mowerSound.update(0, dt, false); return; }
   const now = Date.now() + clockOffset;
   drive(dt, now);
+  mowerSound.update(me.v, dt, connected);
   animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now));

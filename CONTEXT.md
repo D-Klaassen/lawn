@@ -102,6 +102,39 @@ copy must stay identical.
 whether it holds together: how much of the Lawn is grass, lane and water, and
 whether every Tile of every Field can still be cut.
 
+## Finishing a Field is worth a moment
+
+Finishing a Field used to look exactly like walking into one: the same
+banner, the same animation, a different word in the label. The one thing on
+this Lawn a Mower can finish read as an announcement.
+
+It now happens where the Mower is looking, which is the Lawn and not the
+corner of the screen. The parcel itself lights up — a ring of warm light runs
+out of the middle of the Field and a wash follows it, gone in three seconds —
+so what answers is the shape the Mower has just spent its afternoon on. The
+light is the Field's own and is added after the shading, so it lifts ground
+the sun is not on.
+
+It is a glow and not a flash. The first cut of it washed the whole screen to
+white and took the grass, the stripes and the banner with it; a Field lit that
+hard shows the Mower nothing of what it has just done.
+
+Three smaller things carry the rest. The banner has a second mood — gold, a
+tally of the Fields cut, and a spring instead of a slide — because those two
+events were never the same event. The Mower throws a handful of gold
+clippings. And the map fills in: a finished parcel is painted the pale, warm
+green of grass that has just been cut, so the map answers "how much of the
+Lawn is done" at a glance and keeps answering it long after the moment.
+
+A Field that was already finished when a Mower arrives gets none of this. The
+tracker reads the whole Lawn on its first pass, and what it finds there is
+what other people did, or what this Mower did yesterday. Only a Field
+finished after that first reading is worth a fanfare — before this, opening
+the page on a cut Lawn threw a celebration for somebody else's work.
+
+The flare is motion, so a visitor who asks for less of it keeps the banner,
+the tracker and the map, and the Lawn stays as it was.
+
 ## The end of a quest is mowing, not searching
 
 A Field is ten thousand Tiles. Asking for every one of them made the last
