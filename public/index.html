@@ -54,6 +54,48 @@
     font-size: 12px; line-height: 1.4; font-weight: 500;
     letter-spacing: .03em; white-space: nowrap; color: #dce9cf;
   }
+  /* The keys worth a reminder after the help line has faded. They stand on
+     the map, which is the one thing in that corner that never moves, and
+     they leave with the keyboard: a thumb has the buttons instead.
+
+     The tracker reserves this much room for them, the way it already reserves
+     the corner for the map, so its list stops above them instead of running
+     behind them. */
+  :root {
+    --keys-height: 40px;   /* one row of 25px, and the gap over the map */
+    /* Where the tracker stands, so its list can be measured from the same
+       number the panel is placed by. Every screen size that moves one moves
+       the other. */
+    --quest-top: clamp(100px, 22vh, 190px);
+    /* What the bottom of the screen has already spoken for: the map in the
+       corner and the keys that stand on it. The map is asked how tall it is
+       rather than guessed at — it is sized against the window, and `drawMap`
+       publishes `--map-top` whenever it moves. The 24px is the tracker's own
+       background, which hangs 14px below its box, and a gap under that. */
+    --quest-floor: calc(var(--map-top, 150px) + var(--keys-height) + 24px);
+  }
+  body.touch { --keys-height: 0px; }
+  #keys {
+    /* One row, on the middle of the map. The map's right edge stands at the
+       same 16px margin the map is drawn with and its left edge is
+       `--map-side` in from the right, so the middle of the two is the middle
+       of the map, whatever size the window makes it. */
+    position: fixed; z-index: 14;
+    right: calc((var(--map-side, 220px) + 16px) / 2);
+    transform: translateX(50%);
+    bottom: calc(var(--map-top, 150px) + 9px);
+    display: flex; align-items: center; gap: 16px;
+    pointer-events: none; font-size: 11px; letter-spacing: .04em;
+    color: #dce9cf; opacity: .78; text-shadow: 0 1px 6px rgba(0,0,0,.6);
+  }
+  #keys span { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  #keys kbd {
+    display: inline-grid; place-items: center; min-width: 20px; padding: 2px 6px;
+    font: 600 10px/1 inherit; letter-spacing: .06em; color: #f1ffd7;
+    background: rgba(20,32,14,.66); border: 1px solid rgba(220,233,207,.28);
+    border-radius: 5px; box-shadow: 0 2px 8px rgba(11,18,8,.4);
+  }
+  body.touch #keys { display: none; }
   #credit {
     position: fixed; bottom: calc(12px + var(--safe-bottom)); left: 50%;
     transform: translateX(-50%); z-index: 16;
@@ -70,10 +112,17 @@
   #fallback p { max-width: 40ch; }
   .quest-label { font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #e8cd80; }
   #world-quests {
-    position: fixed; right: 24px; top: clamp(100px, 22vh, 190px); z-index: 10; width: 260px;
+    position: fixed; right: 24px; top: var(--quest-top); z-index: 10; width: 260px;
     pointer-events: none; color: #e6dfcc; text-shadow: 0 1px 2px #090e09;
     isolation: isolate;
     transition: opacity .18s ease, transform .18s ease;
+    /* The whole tracker stops above the map and its keys, and the list inside
+       takes whatever the heading and the summary leave. Capping the list
+       instead means guessing what those two come to, and they come to
+       different things on different windows — which is how the list ended up
+       lying across the keys on a narrow one. */
+    max-height: calc(100dvh - var(--quest-top) - var(--quest-floor));
+    display: flex; flex-direction: column;
   }
   /* The big map is read across the whole screen, and the tracker stands over
      the right of it. It steps aside while the map is open, the way it already
@@ -108,7 +157,7 @@
   /* Folded, the tracker still has to say where you are and how far along. */
   #world-quest-here { color: #ecd16b; }
   #world-quest-here:not(:empty)::after { content: " · "; color: #c6bea0; }
-  #world-quest-list { list-style: none; margin: 0; padding: 0 12px 12px; max-height: calc(100dvh - clamp(100px, 22vh, 190px) - 310px); overflow-y: auto; pointer-events: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #ab8a3e #11190f66; }
+  #world-quest-list { list-style: none; margin: 0; padding: 0 12px 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; pointer-events: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #ab8a3e #11190f66; }
   .world-quest { display: flex; gap: 8px; padding: 9px 4px; border-left: 2px solid transparent; transition: background .4s; }
   .world-quest.active { background: #d8b7530d; }
   .world-quest-badge { flex: 0 0 6px; height: 6px; margin-top: 7px; border-radius: 50%; background: #9b8b58; }
@@ -130,17 +179,18 @@
   .world-quest.completed progress::-webkit-progress-value { background: linear-gradient(90deg, #53814a, #c6efa0); }
   .world-quest.completed progress::-moz-progress-bar { background: #c6efa0; }
   @keyframes quest-complete { 0%, 25% { background-color: #e2ef9366; filter: brightness(1.5); } 100% { background-color: transparent; filter: brightness(1); } }
-  @media (max-width: 1100px) { #world-quests { width: 240px; right: 12px; top: 160px; } }
+  @media (max-width: 1100px) { :root { --quest-top: 160px; } #world-quests { width: 240px; right: 12px; } }
   @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
-    #world-quests { top: calc(8px + var(--safe-top) + 124px); right: 8px; width: 202px; }
+    :root { --quest-top: calc(8px + var(--safe-top) + 124px); }
+    #world-quests { right: 8px; width: 202px; }
     #world-quests h2 { font-size: 13px; height: 32px; padding-left: 30px; }
     #world-quest-summary { font-size: 9px; margin: 4px 10px 4px 18px; }
     /* Leave the minimap its corner: the list scrolls rather than reach it. */
-    #world-quest-list { padding: 0 6px 6px; max-height: min(300px, calc(100dvh - 322px)); }
+    #world-quest-list { padding: 0 6px 6px; max-height: min(300px, calc(100dvh - 322px - var(--keys-height))); }
     .world-quest { padding: 7px 3px; gap: 6px; }
     .world-quest-title { font-size: 13px; }
   }
-  @media (max-height: 620px) and (min-width: 1001px) { #world-quests { top: 85px; } #world-quest-list { max-height: calc(100dvh - 340px); } .world-quest { padding-top: 3px; padding-bottom: 3px; } }
+  @media (max-height: 620px) and (min-width: 1001px) { :root { --quest-top: 85px; } .world-quest { padding-top: 3px; padding-bottom: 3px; } }
   @media (prefers-reduced-motion: reduce) { .world-quest, .world-quest.completed { animation: none; transition: none; } .world-quest progress::-webkit-progress-value { transition: none; } }
   #field-banner {
     position: fixed; top: calc(18px + clamp(30px, 5.2vw, 66px)); left: 50%; transform: translate(-50%, 8px);
@@ -284,7 +334,11 @@
 <canvas id="hud"></canvas>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
-<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold M for the map · hold Tab for the board · the blades are always down</div>
+<div id="keys">
+  <span><kbd>E</kbd>Emote</span>
+  <span><kbd>Tab</kbd>Score</span>
+</div>
+<div id="help">W A S D or arrow keys to drive · hold E to emote · hold M for the map · hold Tab for the board · the blades are always down</div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -769,8 +823,12 @@ connect();
 
 /**
  * An Emote is presence, like a position: the server relays it and stores
- * nothing, so it fades from every screen on its own. Hold Space to open the
+ * nothing, so it fades from every screen on its own. Hold E to open the
  * picker, steer left or right to choose, release to show it.
+ *
+ * E and not Space: the hand that drives already lies on W A S D, and E is
+ * under the finger next to it. A thumb on the space bar is a hand that has
+ * left the wheel.
  */
 const EMOTES = ["\u{1F44B}", "\u{1F44D}", "\u{1F604}", "\u{2764}\u{FE0F}"];
 const EMOTE_MS = 2600;
@@ -812,11 +870,13 @@ function showMap(open) {
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   keys.add(k);
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "tab"].includes(k)) e.preventDefault();
+  // Space is nobody's key now, so it goes back to the buttons: a Mower that
+  // tabs to one and presses it must have it press.
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
   if (k === "tab") openBoard();
   else if (k === "m") showMap(true);
-  else if (k === " ") { pickerOpen = true; pickerAt = performance.now(); }
+  else if (k === "e") { pickerOpen = true; pickerAt = performance.now(); }
   else if (pickerOpen && (k === "a" || k === "arrowleft")) pickerPick = (pickerPick + EMOTES.length - 1) % EMOTES.length;
   else if (pickerOpen && (k === "d" || k === "arrowright")) pickerPick = (pickerPick + 1) % EMOTES.length;
   else if (k.length === 1 && k >= "1" && k <= String(EMOTES.length)) sendEmote(Number(k) - 1);
@@ -824,7 +884,7 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
   keys.delete(k);
-  if (k === " " && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
+  if (k === "e" && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
   if (k === "m") showMap(false);
   if (k === "tab") closeBoard();
 });
