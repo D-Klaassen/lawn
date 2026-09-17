@@ -390,11 +390,13 @@ import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createF
  * throws a handful of gold over the last of it.
  */
 function celebrateField(id) {
-  const centre = fieldCentres()[id];
-  if (!centre) return;
   mapStaleAt = performance.now();   // the map is out of date from this moment
   if (reducedMotion.matches) return;
-  flare = { id, at: performance.now() / 1000, x: centre.x, y: centre.y };
+  // The light starts at the Mower and not at the middle of the Field. A
+  // Mower finishes a Field at its edge, wherever the last of the grass was,
+  // and a ring out of the middle of the parcel is a ring it may never see.
+  // This one leaves from under the wheels and runs out over the Field.
+  flare = { id, at: performance.now() / 1000, x: me.x, y: me.y };
   throwClippings(me.x, me.y, me.a, 4, 3);
 }
 
@@ -857,10 +859,10 @@ function connect() {
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
-      // Paint the map now, while the Lawn is still arriving. It is the same
-      // walk over every Tile the quests just made, and doing it here keeps it
-      // out of the first frame the Mower asks for the map.
-      mapImage();
+      // The map is not painted here. The tracker reads the Lawn on the first
+      // frame, before the HUD is drawn, so a map painted now is a map that
+      // does not know which Fields are already cut — and it would have to
+      // repaint itself a moment later, in front of the Mower.
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes;
@@ -1548,12 +1550,12 @@ fn fieldFlare(w : vec2f, field : f32) -> f32 {
   let age = C.misc.x - C.flare.y;
   if (C.flare.x < 0.0 || field != C.flare.x || age < 0.0 || age > FLARE_SECONDS) { return 0.0; }
   let t = age / FLARE_SECONDS;
-  // The ring is the bright part and the wash behind it is barely there. A
-  // Field lit any harder loses its grass, its stripes and the banner over it,
-  // which is the opposite of showing the Mower what it has just done.
-  let ring = exp(-pow((length(w - C.flare.zw) - age * 42.0) / 11.0, 2.0));
-  let fade = 1.0 - smoothstep(0.45, 1.0, t);
-  return (ring * 0.55 + 0.16) * fade;
+  // A wide, unhurried ring: it leaves the Mower at 26 Tiles a second, which
+  // is slow enough to be read as a sweep rather than seen as a flash, and it
+  // is still crossing the Field when the wash behind it starts to go.
+  let ring = exp(-pow((length(w - C.flare.zw) - age * 26.0) / 15.0, 2.0));
+  let fade = 1.0 - smoothstep(0.5, 1.0, t);
+  return (ring * 0.80 + 0.22) * fade;
 }
 
 /** The face of the water, for its normal. It drifts with the clock. */
@@ -1840,7 +1842,7 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
   let place = placeAt(i.w);
   let depth = place.y;
   let lit = fieldFlare(i.w, place.z);
-  base = mix(base, vec3f(0.96, 0.88, 0.48), min(0.35, lit * 0.5));
+  base = mix(base, vec3f(0.96, 0.88, 0.48), min(0.42, lit * 0.5));
   let wetness = smoothstep(-0.15, 0.55, depth);
   if (wetness > 0.0) {
     // A face of moving water, from the slope of the ripple either side.
@@ -1865,7 +1867,7 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
   col = mix(col, C.skyCol.rgb, wetness * 0.18 * (1.0 - abs(dot(n, view))));
   // The light of a finished Field is its own, not the sun's: it is added
   // after the shading, so it lifts the ground even where the ground is shaded.
-  col += vec3f(1.0, 0.88, 0.5) * lit * 0.22;
+  col += vec3f(1.0, 0.88, 0.5) * lit * 0.26;
   return vec4f(col, 1.0);
 }
 
@@ -2981,14 +2983,16 @@ function mapOrigin(view, world, centre) {
 }
 
 /** The whole map as one picture, painted once per size of Lawn. */
-let mapPicture = null, mapPictureFor = "", mapStaleAt = 0;
+let mapPicture = null, mapPictureFor = "", mapStaleAt = -Infinity;
 
 function mapImage() {
   const done = fieldQuests.standing().map(quest => quest.completed);
   const key = `${W}x${H}:${done.map(one => (one ? 1 : 0)).join("")}`;
-  // Repainting is a walk over every Tile of the Lawn, so a Field that has
-  // just been finished waits for its own flare to be over before the map
-  // takes it in. The first picture cannot wait: there is nothing to draw.
+  // Repainting is a walk over every Tile of the Lawn, so a Field finished
+  // just now waits for its own flare to be over before the map takes it in —
+  // and only that. Everything else repaints at once, or a Mower that opens
+  // the page on a Lawn with Fields already cut watches them light up a few
+  // seconds later for no reason it can see.
   const settled = performance.now() - mapStaleAt > FLARE_SECONDS * 1000 + 400;
   if (key !== mapPictureFor && (!mapPicture || settled)) {
     mapPicture = buildMapImage(W, H, done, 2);
