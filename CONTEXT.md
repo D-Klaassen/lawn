@@ -62,6 +62,14 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Score** — how many blades one Mower has cut. The Lawn counts them as it
   cuts them. It is the sum of the Blade Height of each Tile of grass the
   Mower took, so tall grass is worth more than stubble.
+- **Achievement** — a thing the Lawn saw one Mower do, kept for ever under the
+  Mower Key beside the Score. The Lawn awards it; a Mower never claims one.
+- **Harvest** — a whole Field's worth of Blade Height, less the Slack, taken
+  off that Field by one Mower. It is not the Field reading 100% on the
+  Tracker: the Tracker says how the Field stands, which is everybody's work,
+  and a Harvest says what one Mower took off it, which is nobody else's. It is
+  measured against the size of its own Field, so a small Field is not a
+  cheaper Achievement.
 - **Snapshot** — how far each Tile is through its Cycle, from 0 to
   `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Cycle, so
   the wire carries the fraction and not the age in seconds. The wire therefore
@@ -559,6 +567,110 @@ same debounced alarm. To keep the state of the Lawn bounded the way the Tiles
 are, the Lawn keeps `SCORE_KEEP` Scores and forgets the lowest — never one of a
 Mower that is driving, so nobody loses a Score while they are earning it.
 
+## An Achievement is given, never claimed
+
+The board already learned this once. A client asked what its score is answers
+seven hundred million, so the Lawn counts the blades itself. An Achievement is
+the same kind of thing and worth more to forge, because a Score can be mown
+again in an afternoon and an Achievement is meant to be a thing that happened.
+
+So the Lawn awards every one of them from what it counted itself, and the
+client is never asked. It holds one `Uint32` per Mower Key, a bit per
+Achievement, beside the name and the blades. One number, four bytes: the state
+of the Lawn is bounded by what it costs to store a Mower, and a list of objects
+per Mower is not a bound.
+
+The bit is the whole of the wire format, so a bit is never renumbered and never
+reused. A Mower that earned bit 9 last month must still read bit 9 as the same
+thing when it comes back. A new Achievement takes the next free bit; a retired
+one leaves its bit standing empty.
+
+What is earned is worked out from the tally each time and ORed into what is
+held, never assigned over it. Then a threshold that is lowered awards the
+Achievement to everyone who already deserves it, and a threshold that is raised
+takes it from nobody.
+
+There are three things the Lawn counts, and they only ever grow: the blades
+(which is the Score), the Tiles driven, and the Bumps. The blades are split by
+Field on the way past, which costs the Mow Stroke nothing — it has to know
+which Tiles are grass to count them at all, and the table that says so now names
+the Field in the same byte. That table replaced a `placeAt` call per Tile per
+Mow Stroke, so the Lawn does less work than before, not more.
+
+## What the Lawn can vouch for, and what it cannot
+
+A Field reading 100% on the World Quest Tracker is worked out on the client,
+over every Tile of the Field, and the Lawn never sees it. An Achievement hung
+on it would be an Achievement a rewritten client awards itself.
+
+The Harvest is what stands in its place, and it is the better Achievement for
+being personal. It takes the Slack with it, for the reason the Tracker does and
+for a second reason besides: a Mow Stroke is a capsule and a Field boundary is
+a curve, so a Mower that drives the whole parcel in rows four Tiles apart takes
+99.8% of it off and no more — measured, and twice, because the first reading
+was mistaken for a bug. Asking for the last blade would make the perfect drive
+fall short, which is worse than searching for a tuft. The Lawn already knows the Blade Height of every Tile it cuts
+and which Field that Tile is in, so a Harvest costs it nothing — no scan of
+twelve thousand Tiles, no ledger of who cut what, and nothing to leech: a Mower
+that drives into a Field at 99% and cuts the last tuft has cut one tuft, and
+the Lawn says so. It also survives the Regrowth, which is what makes cutting
+one Field three times a thing a Mower can set out to do.
+
+A Bump the Lawn is only told about is the other hole. The daze is still relayed
+on the Mower's word, because a Mower only ever dazes itself and a liar wearing
+its own Stars costs nobody anything. The tally is not: the Lawn asks its own
+question first — is another Mower within `BUMP_REACH`, and were the two of them
+closing faster than `BUMP_CLOSING`? — from the positions and speeds it already
+keeps for the ball. It costs nothing to add, because all of it was already
+there. A Mower alone in a corner claiming a Bump a second is awarded nothing;
+measured, twelve claimed Bumps with nobody near came to none.
+
+This does cost the honest Mower something, and it was taken with open eyes. The
+Lawn works the Closing Speed out from reports 100 ms apart, so it reads a real
+ram lower than the client does and `BUMP_CLOSING` is half of the client's
+`STUN_SPEED`. A genuine Bump the Lawn happens not to see is a Bump nobody is
+told about, and the ladder climbs a little slower than the Stars on the screen
+do. The ladders are short for that reason.
+
+An Emote cannot be made honest at all, so nothing is hung on one.
+
+## A Harvest is kept in blades, because a fraction cannot be rounded
+
+The Lawn holds the blades it took off each Field, not the Harvest itself, and
+divides only when it reads them. That is not tidiness; a fraction there is
+wrong.
+
+Every running total is rounded before it is written down, because a Score is
+one storage value for every Mower and the last decimal places of a distance are
+bytes spent on nothing. A Harvest grows by about a two-thousandth of a Field per
+Mow Stroke, so rounding it to four decimals throws away a part of every one of
+those thousands of steps, and the ones too small to reach the last decimal are
+thrown away whole. Measured: a drive that took 11,520 blades off a Field of
+11,523 recorded a Harvest of 0.93.
+
+Blades are a number of order ten thousand and grow by about six a Mow Stroke,
+so the same rounding is nothing at all. The rule this leaves is worth keeping:
+round the big number, never the fraction built out of it.
+
+## An Achievement outlives a Score
+
+The Lawn keeps `SCORE_KEEP` Scores and forgets the lowest of a Mower that is
+not driving. Left alone, that rule would throw away Achievements, and the two
+are not worth the same: a Score can be mown again and an Achievement cannot be
+earned twice. Worse, `{t:"i"}` takes a Key back only when the Lawn already
+holds a record under it, so a Mower whose record was pruned comes back as a
+stranger.
+
+A Mower that has earned an Achievement is therefore never spare. That exemption
+has to stop somewhere, because every Score is written into one storage value
+and one storage value holds 128 KiB; a record runs to some two hundred bytes,
+so `KEY_KEEP` is set at 500 and leaves the write about a fifth of that ceiling
+in hand. Past it the Lawn forgets the lowest Score it holds, decorated or not.
+
+That is the hole this leaves open, and it opens only on a Lawn that has been
+busy for a long time. Raise `KEY_KEEP` — and split the Scores across chunks,
+the way the Tiles already are — before it does.
+
 ## Who is on the Lawn
 
 The heading over the board and the board itself must count the same Mowers,
@@ -619,6 +731,14 @@ both, and the minimap is measured against the height as well as the width.
 - `public/fields.js` — the map: the seeds, the lanes, the Ditches, and the
   WGSL the shader is built from. One file, three readers.
 - `scripts/check-map.mjs` — reads that map and says whether it holds together.
+- `src/achievements.ts` — the Achievements: the bits, the thresholds, and what
+  each one is called. Built to `public/achievements.js` the way `src/ball.ts`
+  is built to `public/ball.js`, so the Lawn and the client read one table and
+  cannot drift. It touches no DOM, which is why it is shared where
+  `public/fields.js` had to be mirrored.
+- `scripts/check-achievements.mjs` — reads that table and says whether it holds
+  together: one bit each, every Achievement reachable, none of them earned by a
+  Mower that has done nothing, and the nine Field names the same as the map's.
 - `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
 - `public/index.html` — the whole client: WebGPU field, driving, socket, HUD.
   The Lawn is drawn as instanced 3D blades under one sun, from a camera that

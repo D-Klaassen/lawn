@@ -73,8 +73,22 @@
        publishes `--map-top` whenever it moves. The 24px is the tracker's own
        background, which hangs 14px below its box, and a gap under that. */
     --quest-floor: calc(var(--map-top, 150px) + var(--keys-height) + 24px);
+    /* What the middle of the bottom has already spoken for: the tally, the
+       line over it, and the room the score is placed with. It is built from
+       the score's own numbers, so anything standing over the score moves when
+       the score does — a gap in fixed pixels is a gap that closes on some
+       window nobody tried. */
+    --score-floor: calc(38px + var(--safe-bottom) + clamp(24px, 3.1vw, 42px) + 30px);
   }
-  body.touch { --keys-height: 0px; }
+  body.touch {
+    --keys-height: 0px;
+    /* What the bottom of a touch screen has already spoken for: the stick
+       zone on the left, and the column of buttons standing over the map on
+       the right. Whichever reaches higher is the floor, because a card below
+       it is a card under a thumb. The column is three 52px buttons and two
+       10px gaps over the 12px it sits off the map. */
+    --thumb-floor: max(min(42dvh, 330px), calc(var(--map-top, 150px) + 188px));
+  }
   #keys {
     /* One row, on the middle of the map. The map's right edge stands at the
        same 16px margin the map is drawn with and its left edge is
@@ -246,6 +260,101 @@
   }
   #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
   #board-list li span:last-child { color: #e8cd80; }
+  /* Achievements. The panel is the board's twin — the same card in the middle
+     of the screen, held open rather than switched on — because the two answer
+     the same kind of question and a Mower should not learn two panels. */
+  #awards {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 12; pointer-events: none;
+    width: min(460px, 86vw); padding: 18px 22px 20px;
+    background: rgba(20, 32, 14, .95); border: 1px solid rgba(232, 205, 128, .35);
+    border-radius: 10px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+    text-shadow: 0 1px 3px #14200e;
+  }
+  #awards[hidden] { display: none; }
+  #awards .quest-label { display: block; margin-bottom: 12px; text-align: center; }
+  #awards-list {
+    margin: 0; padding: 0 4px 0 0; list-style: none;
+    display: flex; flex-direction: column; gap: 1px;
+    max-height: 56vh; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: #ab8a3e #11190f66;
+  }
+  .award { display: flex; gap: 10px; padding: 7px 8px; border-radius: 5px; }
+  .award-mark { flex: 0 0 14px; text-align: center; font: 12px/1.5 system-ui; color: #6f7d5f; }
+  /* The name over the blurb, not beside it: names are of every length, and
+     beside it the blurbs start at a different place on every row. */
+  .award-copy { flex: 1; min-width: 0; }
+  .award-name { display: block; font: 14px/1.3 Georgia, serif; color: #9aa48c; }
+  .award-blurb { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.4; letter-spacing: .02em; color: #79836c; }
+  .award.earned { background: rgba(229, 255, 151, .08); }
+  .award.earned .award-mark { color: #c6efa0; }
+  .award.earned .award-name { color: #ecd16b; }
+  .award.earned .award-blurb { color: #c6bea0; }
+  /* The card that says one was just earned.
+     It stands at the bottom, over the score, because that is where the eye
+     already is while driving — the top of the screen belongs to the Field
+     banner, and the two of them arriving in the same place would read as one
+     thing happening twice. It rises rather than drops, for the same reason.
+
+     Everything else here is noise made on purpose. Earning one of these is
+     rare, so it springs past its size, throws a ring, and takes a sweep of
+     light across the gold: the manner of the Emote card and the triumph
+     banner, turned up. All of it stands still for a visitor who asks for
+     less motion. */
+  #award-toast {
+    position: fixed; z-index: 13; left: 50%;
+    bottom: calc(var(--score-floor) + 28px);
+    transform: translate(-50%, 22px) scale(.88); opacity: 0;
+    transition: opacity .3s ease, transform .44s cubic-bezier(.2, 1.6, .35, 1);
+    pointer-events: none; text-align: center; overflow: hidden;
+    /* Wide, but never as far as the map. The card is centred and the map is
+       `--map-side` in from the right, so half the card must stop short of
+       that — measured from the map itself, the way everything else in that
+       corner is, and not from a width that happens to clear it on this
+       window. It stops narrowing at the point where reading it would suffer;
+       below that the small layout takes over anyway. */
+    width: min(420px, 84vw, max(250px, calc(100vw - 2 * var(--map-side, 220px) - 34px)));
+    padding: 13px 22px 15px;
+    background:
+      radial-gradient(120% 140% at 50% 120%, #f4d56e1f 0%, #f4d56e00 62%),
+      rgba(20, 32, 14, .95);
+    border: 1px solid rgba(232, 205, 128, .5);
+    border-radius: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+    text-shadow: 0 1px 3px #14200e;
+  }
+  #award-toast.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  /* A thumb drives from the bottom of the screen, so the card stands off it.
+     This holds on a tablet too, where the window is wide enough to keep the
+     rest of the large layout. */
+  body.touch #award-toast { bottom: calc(var(--thumb-floor) + 10px); }
+  /* The ring that leaves the card the moment it lands. It is a box-shadow and
+     not a child, so `overflow: hidden` clips the sweep without clipping it. */
+  #award-toast.visible { animation: award-ring 1s cubic-bezier(.2, .8, .3, 1); }
+  @keyframes award-ring {
+    from { box-shadow: 0 10px 40px rgba(0,0,0,.45), 0 0 0 0 #f4d56ec2, 0 0 22px 2px #f4d56e8a; }
+    to { box-shadow: 0 10px 40px rgba(0,0,0,.45), 0 0 0 30px #f4d56e00, 0 0 22px 2px #f4d56e00; }
+  }
+  /* One sweep of light across the card, a beat after it lands. */
+  #award-toast::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(72deg, #fff0 38%, #fff6d244 48%, #ffffff5e 52%, #fff6d244 56%, #fff0 66%);
+    transform: translateX(-130%); pointer-events: none;
+  }
+  #award-toast.visible::after { animation: award-sweep .9s cubic-bezier(.3, .5, .2, 1) .16s; }
+  @keyframes award-sweep { to { transform: translateX(130%); } }
+  #award-toast .quest-label { color: #f4d56e; }
+  #award-toast-name {
+    margin-top: 6px; font: 700 23px/1.2 Georgia, serif;
+    /* The gold runs through the name once, left to right, as it arrives. */
+    background: linear-gradient(100deg, #f0c85e 0%, #fff6d2 38%, #fffffc 50%, #fff6d2 62%, #f0c85e 100%);
+    background-size: 260% 100%; background-position: 170% 0;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 2px 14px #f0c85e5c) drop-shadow(0 1px 2px #172311);
+  }
+  #award-toast.visible #award-toast-name { animation: award-shimmer 1.5s ease-out .1s both; }
+  @keyframes award-shimmer { from { background-position: 170% 0; } to { background-position: -50% 0; } }
+  #award-toast-blurb { margin-top: 5px; font-size: 11px; letter-spacing: .02em; color: #cfc7a8; }
 
   /* ------------------------------------------------------------------ *
    * touch controls
@@ -305,7 +414,8 @@
   #emote-row .touch-btn:nth-child(3) { animation-delay: .08s; }
   #emote-row .touch-btn:nth-child(4) { animation-delay: .12s; }
   @keyframes emote-pop { from { transform: scale(.2); opacity: 0; } }
-  body.touch #board { pointer-events: auto; }
+  body.touch #board, body.touch #awards { pointer-events: auto; }
+  #awards-list { pointer-events: auto; }
 
   @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
     /* The title, the score and the hint stack at the top, so the whole
@@ -327,6 +437,14 @@
     body:has(#field-banner.visible) #world-quests { visibility: hidden; }
     #board { min-width: min(320px, 88vw); padding: 16px 16px 18px; }
     #board-list li { font-size: 13px; gap: 14px; }
+    #awards { width: min(340px, 90vw); padding: 14px 14px 16px; }
+    #awards-list { max-height: 52dvh; }
+    .award { padding: 6px; gap: 8px; }
+    .award-name { font-size: 13px; }
+    /* The score has gone to the top on a screen this small, so the card
+       clears the map and the stick instead. */
+    #award-toast { bottom: calc(var(--quest-floor) + 6px); width: min(88vw, 400px); }
+    #award-toast-name { font-size: 19px; }
   }
   @media (max-height: 560px) and (max-width: 1000px) {
     #stick-zone { height: min(64dvh, 260px); }
@@ -336,8 +454,11 @@
     #touch-actions { right: calc(var(--map-side, 220px) + 12px); bottom: calc(14px + var(--safe-bottom)); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #field-banner { transition: none; }
+    #field-banner, #award-toast { transition: none; }
     #field-banner.triumph.visible { animation: none; }
+    #award-toast.visible, #award-toast.visible::after,
+    #award-toast.visible #award-toast-name { animation: none; }
+    #award-toast-name { background-position: 60% 0; }
     #field-meter::-webkit-progress-value { transition: none; }
     #stick, #stick-knob, .touch-btn { transition: none; }
     #emote-row .touch-btn { animation: none; }
@@ -361,9 +482,10 @@
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
 <div id="keys">
   <span><kbd>E</kbd>Emote</span>
+  <span><kbd>Q</kbd>Awards</span>
   <span><kbd>Tab</kbd>Score</span>
 </div>
-<div id="help">W A S D or arrow keys to drive · hold E to emote · hold M for the map · hold Tab for the board · the blades are always down</div>
+<div id="help">W A S D or arrow keys to drive · hold E to emote · hold Q for your achievements · hold M for the map · hold Tab for the board · the blades are always down</div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -377,6 +499,15 @@
   <span class="quest-label">On the Lawn &middot; this visit</span>
   <ol id="board-list"></ol>
 </aside>
+<aside id="awards" hidden aria-label="Achievements">
+  <span class="quest-label">Achievements &middot; <span id="awards-count"></span></span>
+  <ol id="awards-list"></ol>
+</aside>
+<div id="award-toast" role="status" aria-live="polite">
+  <div class="quest-label">Achievement earned</div>
+  <div id="award-toast-name"></div>
+  <div id="award-toast-blurb"></div>
+</div>
 <a id="credit" href="https://github.com/Onnokh" target="_blank" rel="noopener noreferrer">Made by Onkie</a>
 <div id="touch-ui">
   <div id="stick-zone"><div id="stick"><div id="stick-knob"></div></div></div>
@@ -385,6 +516,7 @@
       <div id="emote-row" hidden></div>
       <button id="emote-btn" class="touch-btn" type="button" aria-expanded="false" aria-label="Emote">&#128522;</button>
     </div>
+    <button id="awards-btn" class="touch-btn" type="button" aria-pressed="false" aria-label="Achievements">&#127942;</button>
     <button id="board-btn" class="touch-btn" type="button" aria-pressed="false" aria-label="Mowers on the Lawn">&#9776;</button>
   </div>
 </div>
@@ -395,6 +527,7 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
+import { ACHIEVEMENTS, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
  * reward belongs on the Lawn: the parcel itself lights up, and the Mower
@@ -864,6 +997,9 @@ function connect() {
       rememberKey(m.key);
       bladesCut = Number.isFinite(m.s) && m.s >= 0 ? m.s : 0;
       landScore(bladesCut);
+      // The Achievements come back with the Key. They are what this Mower
+      // already had, so they land on the screen without a card.
+      landAwards(m.a);
       connected = true;
       return;
     }
@@ -901,6 +1037,11 @@ function connect() {
       // Lawn says here what it really cut. The Lawn wins: a swath it refused
       // was never grass this Mower took.
       if (Number.isFinite(m.s) && m.s >= 0) bladesCut = m.s;
+    } else if (m.t === "got") {
+      // The Lawn has awarded something. It sends the whole mask and not the
+      // one bit, so a card missed while the socket was away is never lost:
+      // the next one to arrive says everything this Mower holds.
+      takeAwards(m.a);
     } else if (m.t === "bumped") {
       // The Stars of another Mower are its own word, exactly like its
       // position. A Mower that is not in the bump therefore sees it too.
@@ -1010,6 +1151,7 @@ addEventListener("keydown", (e) => {
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
   if (k === "tab") openBoard();
+  else if (k === "q") openAwards();
   else if (k === "m") showMap(true);
   else if (k === "e") { pickerOpen = true; pickerAt = performance.now(); }
   else if (pickerOpen && (k === "a" || k === "arrowleft")) pickerPick = (pickerPick + EMOTES.length - 1) % EMOTES.length;
@@ -1021,10 +1163,11 @@ addEventListener("keyup", (e) => {
   keys.delete(k);
   if (k === "e" && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
   if (k === "m") showMap(false);
+  if (k === "q") closeAwards();
   if (k === "tab") closeBoard();
 });
 addEventListener("blur", () => {
-  keys.clear(); pickerOpen = false; showMap(false); stick.mag = 0; closeBoard(); showEmoteRow(false);
+  keys.clear(); pickerOpen = false; showMap(false); stick.mag = 0; closeBoard(); closeAwards(); showEmoteRow(false);
 });
 const held = (...k) => k.some((x) => keys.has(x));
 
@@ -1073,6 +1216,110 @@ function closeBoard() {
   board.hidden = true;
   boardBtn.setAttribute("aria-pressed", "false");
 }
+
+/**
+ * Achievements: what the Lawn has seen this Mower do.
+ *
+ * Every one of them is awarded by the Lawn and carried here under the Mower
+ * Key, exactly like the Score. Nothing on this side decides anything: the
+ * client holds the mask it was given, draws it, and announces what is new in
+ * it. A rewritten client can therefore lie to its own screen and to nobody
+ * else's, which is the same bargain the Score already makes.
+ */
+const awards = document.getElementById("awards");
+const awardsList = document.getElementById("awards-list");
+const awardsCount = document.getElementById("awards-count");
+const awardsBtn = document.getElementById("awards-btn");
+const awardToast = document.getElementById("award-toast");
+const awardToastName = document.getElementById("award-toast-name");
+const awardToastBlurb = document.getElementById("award-toast-blurb");
+/** How long one card stands before the next one comes, in milliseconds. */
+const AWARD_MS = 3400;
+let awardMask = 0, awardsOpen = false;
+/** Achievements waiting for their turn on the card. Two can land at once. */
+const awardQueue = [];
+let awardTimer;
+
+function drawAwards() {
+  awardsCount.textContent = `${ACHIEVEMENTS.filter((a) => holds(awardMask, a.bit)).length} / ${ACHIEVEMENTS.length}`;
+  awardsList.replaceChildren(...ACHIEVEMENTS.map((achievement) => {
+    const row = document.createElement("li");
+    const earned = holds(awardMask, achievement.bit);
+    row.className = earned ? "award earned" : "award";
+    const mark = document.createElement("span");
+    mark.className = "award-mark";
+    mark.textContent = earned ? "\u2713" : "\u00b7";
+    mark.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("div");
+    copy.className = "award-copy";
+    const name = document.createElement("span");
+    name.className = "award-name";
+    name.textContent = achievement.name;
+    const blurb = document.createElement("span");
+    blurb.className = "award-blurb";
+    blurb.textContent = achievement.blurb;
+    copy.append(name, blurb);
+    row.append(mark, copy);
+    // A locked row still reads out as locked, because the tick is decoration.
+    row.setAttribute("aria-label", `${achievement.name}. ${achievement.blurb} ${earned ? "Earned." : "Not earned."}`);
+    return row;
+  }));
+}
+
+/** Show the next card, or take the last one away when there are no more. */
+function nextAward() {
+  clearTimeout(awardTimer);
+  const achievement = awardQueue.shift();
+  if (!achievement) { awardToast.classList.remove("visible"); return; }
+  awardToastName.textContent = achievement.name;
+  awardToastBlurb.textContent = achievement.blurb;
+  // Take the card away and put it back, so the second Achievement of a pair
+  // springs, rings and catches the light exactly as the first one did. An
+  // animation only starts again on an element that went away, and reading
+  // `offsetWidth` between the two is what makes the browser believe it did.
+  awardToast.classList.remove("visible");
+  void awardToast.offsetWidth;
+  awardToast.classList.add("visible");
+  awardTimer = setTimeout(nextAward, AWARD_MS);
+}
+
+/**
+ * Put on a mask with no fanfare. This is what the Mower already had when it
+ * arrived, not something it is doing now — the same reason the Score is
+ * landed on the screen rather than rolled up to.
+ */
+function landAwards(mask) {
+  awardMask = Number.isFinite(mask) && mask >= 0 ? mask >>> 0 : 0;
+  drawAwards();
+}
+
+/** Take a mask the Lawn has just grown, and announce what is new in it. */
+function takeAwards(mask) {
+  if (!Number.isFinite(mask) || mask < 0) return;
+  const next = mask >>> 0;
+  const fresh = ACHIEVEMENTS.filter((a) => holds(next, a.bit) && !holds(awardMask, a.bit));
+  awardMask = next;
+  drawAwards();
+  if (!fresh.length) return;
+  awardQueue.push(...fresh);
+  // A card already standing keeps its time; the new ones queue behind it.
+  if (!awardToast.classList.contains("visible")) nextAward();
+}
+
+function openAwards() {
+  awardsOpen = true;
+  awards.hidden = false;
+  awardsBtn.setAttribute("aria-pressed", "true");
+}
+
+function closeAwards() {
+  if (!awardsOpen) return;
+  awardsOpen = false;
+  awards.hidden = true;
+  awardsBtn.setAttribute("aria-pressed", "false");
+}
+
+drawAwards();
 
 /* ------------------------------------------------------------------ *
  * the stick
@@ -1154,6 +1401,8 @@ emoteRow.replaceChildren(...EMOTES.map((glyph, i) => {
 emoteBtn.addEventListener("click", () => showEmoteRow(emoteRow.hidden));
 boardBtn.addEventListener("click", () => (boardOpen ? closeBoard() : openBoard()));
 board.addEventListener("click", closeBoard);
+awardsBtn.addEventListener("click", () => (awardsOpen ? closeAwards() : openAwards()));
+awards.addEventListener("click", closeAwards);
 
 /* A coarse pointer gets the controls at once; a laptop with a touchscreen
    gets them the moment a finger lands on it. */
