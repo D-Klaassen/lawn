@@ -372,6 +372,36 @@ const BUMP_CLOSING = 3;
 /** How stale a report may be and still say where a Mower was for a Bump. */
 const BUMP_STALE_MS = 1000;
 /**
+ * Notes the Lawn keeps about what has lately happened on it, and how old one
+ * may be and still be worth telling a Mower that has just arrived.
+ *
+ * They are held in memory and never written down. A Lawn only hibernates when
+ * nobody is driving on it, so a Lawn that has forgotten its notes is a Lawn
+ * where nothing has happened — which is exactly what an empty log says. What
+ * this does buy is the thing a log is for: it survives a reload, and it tells
+ * a Mower who has just walked in what it walked in on.
+ */
+const NOTE_KEEP = 20;
+const NOTE_AGE_MS = 10 * 60 * 1000;
+/**
+ * How long a Mower may be away before the Lawn believes it has gone.
+ *
+ * A reload closes one socket and opens another on the same Mower Key, which is
+ * not a Mower leaving and coming back — it is the same hands on the same
+ * machine, and saying so twice in the corner is the log crying wolf. So
+ * arriving and leaving are worked out per Key and not per socket: a Key with
+ * any socket open is here, and one that goes quiet has this long to come back
+ * before anybody is told.
+ */
+const REJOIN_GRACE_MS = 8000;
+/**
+ * Past this the Lawn stops caring that a Mower left. It only matters when the
+ * last Mower goes and nothing sweeps the list again until somebody new
+ * arrives, hours later: telling them that a stranger left before they got here
+ * is worse than not telling them at all.
+ */
+const LEAVING_STALE_MS = 60000;
+/**
  * Shortest gap between two tallies sent to the same Mower. The client counts
  * the blades itself so the digits roll smoothly, and this is how often the
  * Lawn overwrites that guess with what it really cut.
@@ -537,6 +567,14 @@ export class Lawn extends DurableObject {
    * slept would hand out medals for somebody else's work.
    */
   private readonly fieldWatch = FIELD_NAMES.map(() => ({ at: 0, percent: 0, done: false }));
+  /** What the Lawn has lately had to say, newest last. See `NOTE_KEEP`. */
+  private notes: { k: string; nm?: string; w?: number; f?: number; at: number }[] = [];
+  /** Mower Keys the others have been told are on the Lawn. */
+  private announced = new Map<string, string>();
+  /** Keys whose last socket has gone, waiting to see whether they come back. */
+  private leaving = new Map<string, { name: string; at: number }>();
+  /** When the alarm is next set for, so two callers cannot undercut it. */
+  private alarmAt = 0;
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -600,6 +638,7 @@ export class Lawn extends DurableObject {
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
     server.send(this.ballMessage());
+    server.send(this.logMessage());
     this.announceMowers();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -780,6 +819,75 @@ export class Lawn extends DurableObject {
     this.tell(ws, held);
   }
 
+  /** Whether any open socket other than `going` holds this Mower Key. */
+  private keyIsHere(key: string, going?: WebSocket): boolean {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === going || ws.readyState !== WebSocket.READY_STATE_OPEN) continue;
+      if ((ws.deserializeAttachment() as { key?: string } | null)?.key === key) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Tell the Lawn that a Mower Key has arrived, if it was not already here.
+   *
+   * A second tab on one Key is not a second arrival, and neither is a reload:
+   * both find the Key already announced and say nothing.
+   */
+  private arrive(key: string, name: string): void {
+    this.leaving.delete(key);
+    if (this.announced.has(key)) return;
+    this.announced.set(key, name);
+    this.broadcastNote({ k: "here", nm: name });
+  }
+
+  /**
+   * Work through the Keys whose sockets have gone, and announce the ones that
+   * have stayed away. It runs whenever a socket opens or closes, which is the
+   * only time any of this can have changed.
+   */
+  private sweepLeaving(): void {
+    const now = Date.now();
+    for (const [key, who] of this.leaving) {
+      if (this.keyIsHere(key)) { this.leaving.delete(key); continue; }
+      const away = now - who.at;
+      if (away < REJOIN_GRACE_MS) continue;
+      this.leaving.delete(key);
+      this.announced.delete(key);
+      // Too long ago to be news. The last Mower left and nothing swept the
+      // list until this one arrived; it does not want the old goodbye.
+      if (away > LEAVING_STALE_MS) continue;
+      this.broadcastNote({ k: "gone", nm: who.name });
+    }
+    // Anything still waiting needs the Lawn to look again, and a socket may
+    // never open or close between now and then.
+    if (this.leaving.size) this.wake(REJOIN_GRACE_MS);
+  }
+
+  /** Say a thing to everyone on the Lawn, and remember having said it. */
+  private broadcastNote(what: { k: string; nm?: string; w?: number; f?: number }): void {
+    this.remember(what);
+    this.broadcast(JSON.stringify({ t: what.k, ...what }));
+  }
+
+  /**
+   * Say something, and remember having said it. The note is what a Mower
+   * arriving later is told; the message is what everyone here hears now.
+   */
+  private remember(what: { k: string; nm?: string; w?: number; f?: number }): void {
+    this.notes.push({ ...what, at: Date.now() });
+    if (this.notes.length > NOTE_KEEP) this.notes.shift();
+  }
+
+  /** What has lately happened, for a Mower that has just arrived. */
+  private logMessage(): string {
+    const now = Date.now();
+    return JSON.stringify({
+      t: "log",
+      lines: this.notes.filter((one) => now - one.at <= NOTE_AGE_MS),
+    });
+  }
+
   private ballMessage(): string {
     return JSON.stringify({ t: "ball", ...this.ball, n: Date.now() });
   }
@@ -836,8 +944,17 @@ export class Lawn extends DurableObject {
 
   webSocketClose(ws: WebSocket): void {
     this.ballMowers.delete(ws);
-    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
-    if (who?.id) this.broadcast(JSON.stringify({ t: "gone", id: who.id }), ws);
+    const who = ws.deserializeAttachment() as { id?: string; key?: string; name?: string } | null;
+    // The name rides on the goodbye, because the log names who left and a
+    // Mower the others never heard report has no name on their screens.
+    // `left` is presence and not news: the others use it to forget where that
+    // Mower stood, and it fires for a reload exactly as it does for a goodbye.
+    // Whether anything is said about it is `sweepLeaving`'s to decide.
+    if (who?.id) this.broadcast(JSON.stringify({ t: "left", id: who.id }), ws);
+    if (who?.key && who?.name && !this.keyIsHere(who.key, ws)) {
+      this.leaving.set(who.key, { name: who.name, at: Date.now() });
+    }
+    this.sweepLeaving();
     this.forgetBudget(ws, who?.key || who?.id || "");
     this.announceMowers();
   }
@@ -869,6 +986,10 @@ export class Lawn extends DurableObject {
   }
 
   async alarm(): Promise<void> {
+    this.alarmAt = 0;
+    // A Mower that left while nobody else was coming or going is decided here.
+    // Without this the last one out of the Lawn is never said to have left.
+    this.sweepLeaving();
     if (!this.dirty) return;
     this.dirty = false;
     this.prune();
@@ -1003,6 +1124,16 @@ export class Lawn extends DurableObject {
     const after = (before | earnedMask(tallyOf(score))) >>> 0;
     if (after === before) return;
     score.a = after;
+    // Everyone hears about it. An Achievement earned where nobody can see it
+    // is half an Achievement, and the Lawn is a shared field.
+    const won: number[] = [];
+    for (let bit = 0; bit < 32; bit++) {
+      if ((after & (1 << bit)) && !(before & (1 << bit))) won.push(bit);
+    }
+    if (won.length) {
+      const who = ws.deserializeAttachment() as { id?: string; name?: string } | null;
+      for (const bit of won) this.broadcastNote({ k: "won", nm: who?.name, w: bit });
+    }
     try {
       ws.send(JSON.stringify({ t: "got", a: after, ...this.tallyMessage(score) }));
     } catch {
@@ -1035,7 +1166,13 @@ export class Lawn extends DurableObject {
       // Only the crossing counts. A Field stays done until the Regrowth takes
       // it back under the line, and then it can be finished — and crowned —
       // all over again.
-      if (done && !watch.done && !first) this.crownField(field);
+      if (done && !watch.done && !first) {
+        // The line about a finished Field is said by each client as it draws
+        // the flare, so the two land together. The Lawn only remembers it, for
+        // whoever arrives afterwards.
+        this.remember({ k: "cut", f: field });
+        this.crownField(field);
+      }
       watch.done = done;
     }
   }
@@ -1177,6 +1314,12 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
     const id = who?.id ?? mowerId();
     const name = held?.n ?? mowerId();
     ws.serializeAttachment({ id, key, name });
+    // Say so to the Lawn. A Mower is only worth announcing once it holds its
+    // Key: that is the moment it has the name it will wear, and the Key is
+    // what says whether this is somebody new or the same Mower back from a
+    // reload.
+    this.arrive(key, name);
+    this.sweepLeaving();
     try {
       // The Achievements come back with the Key, because they are the whole
       // of what a returning Mower has to show for its last visit. They are
@@ -1229,7 +1372,22 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
   private schedulePersist(): void {
     if (this.dirty) return;
     this.dirty = true;
-    void this.ctx.storage.setAlarm(Date.now() + PERSIST_DELAY_MS);
+    this.wake(PERSIST_DELAY_MS);
+  }
+
+  /**
+   * Ask to be woken in `delay`, unless something sooner is already asked for.
+   *
+   * A Durable Object has one alarm, and two things now want it: writing the
+   * Lawn down, and deciding whether a Mower that went quiet has really gone.
+   * Whichever wants it first gets it, and whatever is left over asks again
+   * when the alarm has been served.
+   */
+  private wake(delay: number): void {
+    const at = Date.now() + delay;
+    if (this.alarmAt > Date.now() && this.alarmAt <= at) return;
+    this.alarmAt = at;
+    void this.ctx.storage.setAlarm(at);
   }
 
 

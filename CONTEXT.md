@@ -71,6 +71,10 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Crowning** — the giving of a Field's Achievement to every Mower standing
   in that Field at the moment it is finished. The Lawn judges both: whether
   the Field is cut, and who is in it.
+- **Log** — the corner that says what has lately happened on the Lawn: who
+  arrived, who left, who won something, and which Field has just been finished.
+- **Note** — one line of the Log, as the Lawn remembers it. It is kept in
+  memory and never written down.
 - **Snapshot** — how far each Tile is through its Cycle, from 0 to
   `SNAPSHOT_SCALE`, sent as a `Uint16Array`. No two Tiles share a Cycle, so
   the wire carries the fraction and not the age in seconds. The wire therefore
@@ -792,6 +796,57 @@ already makes.
 The tally the bars are drawn from rides on `{t:"score"}`, which already goes to
 that one Mower four times a second and is never broadcast. A bar cannot be
 drawn from a number the client was never told.
+
+## The Log says what happened, and survives a reload
+
+Four things happen on the Lawn that a Mower would otherwise never know about:
+somebody arrives, somebody leaves, somebody wins an Achievement, and a Field is
+finished. A Lawn where none of that is said is a Lawn of strangers, so the
+corner says it.
+
+The Lawn keeps the last `NOTE_KEEP` of them with the moment each happened, and
+hands them to every Mower that connects. That is the whole of what makes the
+Log survive a reload, and it is also what tells a Mower arriving in the middle
+of somebody else's afternoon what it has walked in on. A replayed line does not
+spring in and is drawn dimmer: it did not happen just now.
+
+The Notes are held in memory and never written to storage. A Lawn only
+hibernates when nobody is driving on it, so a Lawn that has forgotten its Notes
+is a Lawn where nothing has happened — which is exactly what an empty corner
+says.
+
+The line about a finished Field is the one thing the Lawn does not send. Each
+client says it as it draws the flare, so the two land together; the Lawn only
+remembers it, for whoever arrives afterwards.
+
+## Arriving and leaving belong to the Key, not to the socket
+
+A reload closes one socket and opens another. That is not a Mower leaving and
+coming back — it is the same hands on the same machine — and a corner that says
+so twice is a corner crying wolf.
+
+So presence for the Log is a property of the Mower Key. A Key with any socket
+open is here. Arriving is announced the first time a Key is seen and never
+again, which also means the second tab of one browser announces nothing.
+Leaving waits: a Key whose last socket has gone has `REJOIN_GRACE_MS` to come
+back before anybody is told, and coming back inside that cancels the goodbye
+without a word.
+
+Nothing else moved. `{t:"left"}` still goes out the moment a socket closes,
+because the other Mowers use it to forget where that machine stood, and that is
+presence rather than news — it fires for a reload exactly as it does for a
+goodbye. What the Log says about it is decided separately and later.
+
+Later needs waking, and that was the bug worth writing down: the sweep ran only
+when a socket opened or closed, so the last Mower out of an empty Lawn was
+never said to have left at all. The alarm now serves two masters — writing the
+Lawn down and deciding who has gone — and `wake` hands it to whichever wants it
+first, so neither can push the other back.
+
+One hole stays open, and it is the Mower Key's own. A Mower that has never cut
+a blade has no Score, so the Lawn issues it a fresh Key every visit; each reload
+is therefore a new Mower arriving, and the corner says so. It closes itself the
+moment that Mower moves, because moving is what writes its record.
 
 ## The board wears the medals
 
