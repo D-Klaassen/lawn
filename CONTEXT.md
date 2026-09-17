@@ -29,6 +29,10 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   which way it points. It is the Mow Stroke and the position at once, because
   both say the same thing about the same movement. See "What a report costs".
 - **Mower** — one connected visitor.
+- **Grip** — how hard a Mower may pull sideways. It is what makes the wheels
+  the limit of a turn and not the key: the tightest circle a Mower can hold is
+  its speed squared over the Grip, so the faster it goes the wider it comes
+  round.
 - **Bump** — two Mowers touch while they close on each other. A contact while
   both stand still, or while one only catches up with the other, is not a
   Bump.
@@ -195,6 +199,29 @@ and the grass is the only one of the three that touches the driving.
 
 A camera that moves on its own is what reduced motion asks about, so that one
 keeps the camera nailed and the bodies flat.
+
+## A corner is bought with the throttle
+
+A Mower at full throttle used to come round inside 6.8 Tiles on a cut lane and
+4.9 in a standing Field, against a deck 5.2 Tiles wide: in the grass it turned
+inside its own width. Full throttle and full lock drew a perfect circle, so
+neither the corner nor the straight asked anything of the driver.
+
+The Grip is the answer. The wheels hold 14 Tiles a second squared sideways and
+no more, so the tightest circle a Mower can hold is its speed squared over
+that: 15.0 Tiles across on a cut lane and 7.7 in a standing Field. Under about
+four and a half Tiles a second the wheels never run out, and the Mower steers
+as it always did — a Mower at a walk still turns on the spot.
+
+So a corner is bought with the throttle. Come off it and the drag takes half
+the speed in an eighth of a second and the turn shuts to a quarter of the
+width; stay on it and the Mower goes wide. That is the whole of the skill: the
+throttle is the steering at speed, and a straight pass through a Field is
+worth driving because the turn at the end of it costs something.
+
+Nothing here scrubs speed off a Mower for asking. The Grip refuses the turn,
+it does not take the speed away, so a Mower is never slowed by a key it
+pressed — and the Lawn still never sees a swath faster than `MAX_SPEED`.
 
 ## The water says no, and the Lawn says it too
 
