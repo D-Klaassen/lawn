@@ -425,7 +425,9 @@ const MOWER_SLOTS = 24;
 const MOWER_COL0 = 60 + MOWER_SLOTS * 4;
 /** Floats in the camera uniform. Mirrors `struct Cam` in the shader. */
 const BALL_OFFSET = MOWER_COL0 + MOWER_SLOTS * 4;
-const CAM_FLOATS = BALL_OFFSET + 8;
+/** Where the lean of the first Mower sits: its pitch, then its roll. */
+const MOWER_LEAN0 = BALL_OFFSET + 8;
+const CAM_FLOATS = MOWER_LEAN0 + MOWER_SLOTS * 4;
 const SHADOW_SIZE = 1536;
 /** Texels per Tile and Tiles of margin in the ground bake. Mirrors the shader. */
 const GROUND_RES = 4, GROUND_MARGIN = 12;
@@ -614,6 +616,53 @@ document.addEventListener("visibilitychange", () => {
 });
 
 const MAX_V = 13, ACCEL = 62, DRAG = 5.5, TURN = 3.0;
+/**
+ * How hard deep grass holds a Mower back. It is drag and not a speed limit,
+ * so a Mower leaving a cut lane settles into the grass instead of hitting a
+ * wall: at full stand it takes the top speed from 11.3 Tiles a second to 8.4.
+ *
+ * Nothing here ever makes a Mower faster than it was. The speed of a cut lane
+ * is the speed the Lawn has always allowed, and the grass is what takes it
+ * away — so a Mower is quick on the ground it has already cut, and the Lawn
+ * never sees a swath it has to refuse.
+ */
+const GRASS_DRAG = 1.9;
+/**
+ * How a Mower wears its weight. A machine under power lifts its nose, a
+ * machine braking dips it, and a machine turning at speed rolls out of the
+ * corner. None of it moves the Mower one Tile: it is the same drive, worn.
+ */
+const LEAN_TAU = 0.085;       // seconds the body takes to follow
+/** Seconds of smoothing on the travel the camera reads. */
+const DRIFT_TAU = 0.08;
+const PITCH_PER_ACCEL = 0.0016;
+const ROLL_PER_TURN = 0.0026;
+const LEAN_MAX = 0.10;        // radians, about six degrees
+
+/** Ease a value towards another, at the same rate whatever the frame rate. */
+function ease(from, to, tau, dt) {
+  return from + (to - from) * (1 - Math.exp(-dt / tau));
+}
+
+/** The short way round between two headings. */
+function angleGap(to, from) {
+  const d = to - from;
+  return Math.atan2(Math.sin(d), Math.cos(d));
+}
+
+/**
+ * Lean a body into what it is doing. Both the pitch and the roll are eased,
+ * because the numbers they come from are a difference over one frame and jump
+ * about; the body they belong to has weight and cannot.
+ */
+function leanBody(body, spin, speed, accel, dt) {
+  const pitch = Math.max(-LEAN_MAX, Math.min(LEAN_MAX, accel * PITCH_PER_ACCEL));
+  // Out of the corner, not into it: a Mower turning right throws its weight
+  // left, and the left side is the one that goes down.
+  const roll = Math.max(-LEAN_MAX, Math.min(LEAN_MAX, -spin * speed * ROLL_PER_TURN));
+  body.pitch = ease(body.pitch ?? 0, pitch, LEAN_TAU, dt);
+  body.roll = ease(body.roll ?? 0, roll, LEAN_TAU, dt);
+}
 const keys = new Set();
 
 function heightAt(i, now) {
@@ -1173,7 +1222,31 @@ function moveMower(dx, dy, now) {
   }
 }
 
-function drive(dt) {
+/**
+ * How deep the grass is that the Mower is about to cut, from 0 to 1.
+ *
+ * It reads across the leading edge of the deck and not under the middle of
+ * it: the Tile a Mower stands on was cut by the Mower standing on it, so it
+ * is always bare, and a Mower measured there would never meet any grass at
+ * all. Reversing, the leading edge is the other one.
+ */
+function bite(lawnNow) {
+  if (!mownAt || !regrowMs) return 0;
+  const nose = RADIUS * 1.1 * Math.sign(me.v || 1);
+  const ca = Math.cos(me.a), sa = Math.sin(me.a);
+  let sum = 0, read = 0;
+  for (const across of [-1.5, 0, 1.5]) {
+    const x = me.x + ca * nose - sa * across;
+    const y = me.y + sa * nose + ca * across;
+    if (x < 0 || y < 0 || x >= W || y >= H) continue;
+    read++;
+    // A lane and a Ditch hold nothing back. Only grass does.
+    if (onGrass(x, y)) sum += heightAt((y | 0) * W + (x | 0), lawnNow);
+  }
+  return read ? sum / read : 0;
+}
+
+function drive(dt, lawnNow) {
   mowing *= Math.exp(-dt * 7);
   const now = performance.now();
   // A dazed Mower keeps its momentum and loses its controls. It is still
@@ -1195,16 +1268,30 @@ function drive(dt) {
   }
 
   if (stunned) { fwd = 0; turn = 0; }
+  const wasV = me.v, wasA = me.a;
   me.v += fwd * ACCEL * dt;
-  me.v -= me.v * DRAG * (stunned ? STUN_DRAG : 1) * dt;
+  // Deep grass is heavy. A Mower on ground it has already cut runs at the
+  // speed it always did; one biting into a standing Field gives some of it up.
+  me.v -= me.v * (DRAG + GRASS_DRAG * bite(lawnNow)) * (stunned ? STUN_DRAG : 1) * dt;
   me.v = Math.max(-MAX_V * 0.5, Math.min(MAX_V, me.v));
   // A mower only steers while the wheels turn, same as the real thing.
   me.a += turn * TURN * dt * Math.min(1, 0.25 + Math.abs(me.v) / 4) * Math.sign(me.v || 1);
   // The daze reads on the Mower itself, and not only in the Stars above it.
   if (stunned && !reducedMotion.matches) me.a += Math.sin(now * 0.021) * 1.3 * dt;
 
+  // A frame short enough divides into noise, and the body is eased anyway.
+  const rate = dt > 0.0005 ? 1 / dt : 0;
+  leanBody(me, angleGap(me.a, wasA) * rate, Math.abs(me.v), (me.v - wasV) * rate, dt);
+
   const px = me.x, py = me.y;
   moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, now);
+
+  // Where the Mower is really going, which is not always where it is pointed
+  // or how hard it is pushing: a Mower held against a bank or another Mower
+  // is going nowhere at all. The camera leads on this and not on the
+  // throttle, so it never walks off and leaves a stuck Mower behind.
+  me.driftX = ease(me.driftX ?? 0, (me.x - px) * rate, DRIFT_TAU, dt);
+  me.driftY = ease(me.driftY ?? 0, (me.y - py) * rate, DRIFT_TAU, dt);
 
   if (px !== me.x || py !== me.y) cut(px, py, me.x, me.y, me.a, true);
 
@@ -1228,6 +1315,11 @@ function drive(dt) {
   for (const [id, p] of peers) {
     if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
     interpolatePeer(p, renderTime);
+    // Another Mower leans by what it is seen to do, which is all anybody
+    // knows about it: the reports say where it was, and the weight follows.
+    const speed = Math.hypot(p.vx ?? 0, p.vy ?? 0);
+    leanBody(p, angleGap(p.a, p.wasA ?? p.a) * rate, speed, (speed - (p.wasSpeed ?? speed)) * rate, dt);
+    p.wasA = p.a; p.wasSpeed = speed;
   }
   // The heading and the board now count the same Mowers: the ones that have
   // spoken, and you.
@@ -1284,8 +1376,8 @@ function interpolatePeer(p, renderTime) {
  * model is drawn as a dot on the map either way.
  */
 function allMowers() {
-  const seat = (p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false });
-  const mine = { x: me.x, y: me.y, a: me.a, hue: myHue, me: true };
+  const seat = (p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false, pitch: p.pitch ?? 0, roll: p.roll ?? 0 });
+  const mine = { x: me.x, y: me.y, a: me.a, hue: myHue, me: true, pitch: me.pitch ?? 0, roll: me.roll ?? 0 };
   const others = [...peers.values()];
   if (others.length + 1 > MOWER_SLOTS) {
     others.sort((a, b) => (a.x - me.x) ** 2 + (a.y - me.y) ** 2
@@ -1313,6 +1405,7 @@ const FIELD_WGSL = `struct Cam {
   mowerCol : array<vec4f, ${MOWER_SLOTS}>,    // paint
   ball : vec4f, // x, height, y, radius
   ballRoll : vec4f,
+  mowerLean : array<vec4f, ${MOWER_SLOTS}>,   // pitch, roll; z and w spare
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -1879,9 +1972,26 @@ fn mowerAt(v : MVertex, ii : u32) -> Part {
   var sc = local * C.opts.y;
   sc.y += m.w * (0.018 + sin(C.misc.x * 32.0) * 0.018);
   sc.y += sc.x * sin(C.misc.x * 21.0) * m.w * 0.006;
+  // The weight of the machine. Pitch turns it about the axis across the
+  // wheels and roll about the axis along them, both before the heading, so
+  // the two read the same whichever way the Mower faces. The normals turn
+  // with the body: a lean the light does not follow is a decal, not a lean.
+  let lean = C.mowerLean[ii];
+  let cp = cos(lean.x);
+  let sp = sin(lean.x);
+  let cr = cos(lean.y);
+  let sr = sin(lean.y);
+  var body = vec3f(sc.x * cp - sc.y * sp, sc.x * sp + sc.y * cp, sc.z);
+  body = vec3f(body.x, body.y * cr - body.z * sr, body.y * sr + body.z * cr);
+  var n = vec3f(nrm.x * cp - nrm.y * sp, nrm.x * sp + nrm.y * cp, nrm.z);
+  n = vec3f(n.x, n.y * cr - n.z * sr, n.y * sr + n.z * cr);
+  // A machine leaning about its own middle puts a wheel through the ground.
+  // Lift it by as much as the lean takes down: the wheels stand at 0.85 out
+  // and 0.61 along, and the ground is the one thing that cannot give.
+  body.y += (abs(sr) * 0.85 + abs(sp) * 0.61) * C.opts.y;
   var p : Part;
-  p.world = vec3f(m.x + sc.x * ca - sc.z * sa, sc.y, m.y + sc.x * sa + sc.z * ca);
-  p.nrm = vec3f(nrm.x * ca - nrm.z * sa, nrm.y, nrm.x * sa + nrm.z * ca);
+  p.world = vec3f(m.x + body.x * ca - body.z * sa, body.y, m.y + body.x * sa + body.z * ca);
+  p.nrm = vec3f(n.x * ca - n.z * sa, n.y, n.x * sa + n.z * ca);
   p.panel = panel;
   return p;
 }
@@ -2290,7 +2400,16 @@ function tuneFieldScale(ts) {
   }
 }
 
-function render(now, ts) {
+/**
+ * Where the camera is looking, which is not quite where the Mower is. See
+ * the note in `render`.
+ */
+const CAM_LEAD = 5.0;   // Tiles ahead of the Mower at full speed
+const CAM_TAU = 0.16;   // seconds the camera takes to catch up
+const CAM_PULL = 0.11;  // how much further off it stands at full speed
+const camLook = { x: 0, y: 0, following: false };
+
+function render(now, ts, dt) {
   // 4K panels otherwise turn the canvas into an enormous offscreen buffer.
   // One device pixel per CSS pixel is still crisp at this camera distance.
   const dpr = Math.min(devicePixelRatio || 1, innerWidth * innerHeight > 7000000 ? 1 : fieldScale);
@@ -2344,9 +2463,34 @@ function render(now, ts) {
 
   // Fixed heading. A camera that turns with the mower makes a big lawn
   // unreadable; this one only follows its position, and stays over the Lawn.
-  const back = 32, high = 32;
-  const tx = Math.max(11, Math.min(W - 11, me.x));
-  const tz = Math.max(6, Math.min(H - 14, me.y));
+  //
+  // It does not follow it exactly. A camera nailed to the Mower holds it dead
+  // still in the middle of the frame, and then the only thing on the screen
+  // that says thirteen Tiles a second is the ground going past. This one
+  // looks where the Mower is going rather than where it stands, and takes its
+  // time getting there, so the Mower runs out ahead of the middle as it picks
+  // up speed and settles back into it as it stops. It stands further off the
+  // faster the Mower goes, which widens the road ahead at the speed there is
+  // most of it to read.
+  const still = reducedMotion.matches;
+  const driftX = (me.driftX ?? 0) / MAX_V, driftY = (me.driftY ?? 0) / MAX_V;
+  const pace = Math.min(1, Math.hypot(driftX, driftY));
+  const wantX = me.x + driftX * CAM_LEAD;
+  const wantY = me.y + driftY * CAM_LEAD;
+  if (!camLook.following || still) {
+    // The first frame has nowhere to come from, and a camera that moves on
+    // its own is the thing reduced motion asks about: that one stays put.
+    camLook.x = still ? me.x : wantX;
+    camLook.y = still ? me.y : wantY;
+    camLook.following = true;
+  } else {
+    camLook.x = ease(camLook.x, wantX, CAM_TAU, dt);
+    camLook.y = ease(camLook.y, wantY, CAM_TAU, dt);
+  }
+  const pull = still ? 1 : 1 + CAM_PULL * pace;
+  const back = 32 * pull, high = 32 * pull;
+  const tx = Math.max(11, Math.min(W - 11, camLook.x));
+  const tz = Math.max(6, Math.min(H - 14, camLook.y));
   const impact = bumps.at(-1);
   const impactAge = impact ? (ts - impact.born) / 190 : 1;
   const kick = !reducedMotion.matches && impactAge >= 0 && impactAge < 1
@@ -2359,7 +2503,7 @@ function render(now, ts) {
   const air = DAYLIGHT;
   const lightDir = air.dir;
   const lightEye = [tx + lightDir[0] * 70, lightDir[1] * 70, tz + lightDir[2] * 70];
-  const sunHalf = 30;
+  const sunHalf = 30 * pull;
   const lightVP = mul(ortho(sunHalf, 1, 150), lookAt(lightEye, [tx, 0, tz], [0, 1, 0]));
 
   const sceneScale = cw * ch > 7000000 ? 1.28 : 1;
@@ -2385,6 +2529,10 @@ function render(now, ts) {
     C[60 + k * 4] = m.x; C[61 + k * 4] = m.y; C[62 + k * 4] = m.a; C[63 + k * 4] = m.me && !reducedMotion.matches ? mowing : 0;
     const [r, gg, b] = hslToRgb(m.hue, m.me ? 0.72 : 0.58, m.me ? 0.56 : 0.5);
     C[MOWER_COL0 + k * 4] = r; C[MOWER_COL0 + 1 + k * 4] = gg; C[MOWER_COL0 + 2 + k * 4] = b;
+    // A body that leans is motion nobody asked for, so it stands still for a
+    // visitor who asked for less of it.
+    C[MOWER_LEAN0 + k * 4] = reducedMotion.matches ? 0 : m.pitch;
+    C[MOWER_LEAN0 + 1 + k * 4] = reducedMotion.matches ? 0 : m.roll;
   });
   if (ball) {
     C.set([ballVisual.x, ballVisual.z, ballVisual.y, BALL_RADIUS, ballVisual.rollX, ballVisual.rollY, 0, 0], BALL_OFFSET);
@@ -2969,11 +3117,11 @@ function frame(ts) {
   last = ts;
   if (!mownAt || !F) return;
   const now = Date.now() + clockOffset;
-  drive(dt);
+  drive(dt, now);
   animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now));
-  render(now, ts);
+  render(now, ts, dt);
   drawHud();
   tuneFieldScale(ts);
 }

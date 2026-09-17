@@ -111,6 +111,53 @@ blade. The bar therefore fills exactly as the quest completes, and it never
 reads 97% and then jumps: 97% really is 3% standing. Slack is what the
 progress is measured against; it is never taken off the end of it.
 
+## Driving has weight
+
+Three things say how fast a Mower is going, and none of them is a number on
+the screen.
+
+**The grass is heavy.** Deep grass costs a Mower a quarter of its speed:
+11.3 Tiles a second on ground it has already cut, 8.0 in a standing Field.
+It is drag and not a limit, so a Mower leaving a cut lane settles into the
+grass instead of hitting a wall, and the reading is taken across the leading
+edge of the deck — the Tile under the middle of a Mower was cut by that
+Mower, and a Mower measured there would never meet grass at all.
+
+Nothing here ever makes a Mower faster than it was. The speed of a cut lane
+is the speed the Lawn has always allowed; the grass is what takes it away.
+That matters, because a boost would have to be bought from `MAX_SPEED` on the
+Lawn, and every Tile a second added there is a Tile a second a rewritten
+client may shave. This costs nothing, and the Lawn never sees a swath it has
+to refuse.
+
+**The camera leads.** A camera nailed to the Mower holds it dead still in the
+middle of the frame, and then the only thing on the screen that says thirteen
+Tiles a second is the ground going past. The camera looks up to five Tiles
+ahead and takes 0.16 seconds to get there, so the Mower runs out ahead of the
+middle as it picks up speed and settles back as it stops. It stands further
+off the faster the Mower goes, which widens the road ahead where there is
+most of it to read.
+
+It leads on the travel and never on the throttle. A Mower held against a bank
+or another Mower is going nowhere however hard it pushes, and a camera that
+read the throttle would walk away and leave it behind. Measured: 2.43 Tiles
+of lead on a cut lane, 1.80 in deep grass, 0 in the corner of the Lawn at
+full throttle.
+
+**The body wears it.** The nose lifts about two and a half degrees under
+power and dips as much off it, and the body rolls three and a half degrees
+out of a corner — out of it and not into it, because a Mower turning right
+throws its weight to the left. The normals turn with the body, or the light
+slides off the paint while the machine leans under it, and the whole machine
+lifts by as much as the lean takes down, or a wheel goes through the ground.
+Everyone else leans too, worked out from the reports they are drawn between.
+
+None of it moves a Mower one Tile. The lean is worn, the camera is a view,
+and the grass is the only one of the three that touches the driving.
+
+A camera that moves on its own is what reduced motion asks about, so that one
+keeps the camera nailed and the bodies flat.
+
 ## The water says no, and the Lawn says it too
 
 A Ditch is the first thing on the Lawn a Mower cannot drive through, so both
