@@ -4,13 +4,23 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { placeAt } from '../public/fields.js';
+import { treeEarthAt } from '../public/trees.js';
 
 const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 const start = source.indexOf('const SEEDS:');
-const end = source.indexOf('/** Grass grows', start);
+// The slice must end at the last thing the map is made of. It used to end at
+// a comment that has since been deleted, which quietly made the slice the
+// whole file — `export class Lawn` is not something `vm` will run, so this
+// check threw instead of checking. It is in `package.json` now so it cannot
+// rot unnoticed again.
+const end = source.indexOf('/** Water and trunks stop', start);
+assert.ok(start >= 0 && end > start, 'cannot find the map in src/index.ts');
+// The Lawn's own `placeAt` asks the trees where the bare earth is, so the
+// sandbox is handed the same answer the client uses. Anything the map depends
+// on has to come in here, or this check tests a map that is not the map.
 const server = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\nplaceAt;', {
   target: ts.ScriptTarget.ES2022,
-}));
+}), { treeEarthAt });
 let checked = 0;
 for (const [width, height] of [[408, 272], [288, 192]]) {
   for (let y = 1; y < height - 1; y += 0.7) {

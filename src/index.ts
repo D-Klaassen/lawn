@@ -112,6 +112,17 @@ function warpY(x: number, y: number): number {
   return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
 }
 
+/**
+ * How far the shoreline of a Ditch wanders from the straight, in Tiles.
+ * Mirrors `shoreWander` in `public/fields.js`, which must stay identical or
+ * the Lawn and the client disagree about which Tiles are grass.
+ */
+function shoreWander(x: number, y: number): number {
+  return 0.55 * Math.sin(x * 0.23 + y * 0.17)
+    + 0.3 * Math.sin(x * 0.11 - y * 0.31)
+    + 0.16 * Math.sin(x * 0.47 + y * 0.39);
+}
+
 /** How far a point lies inside the water. Mirrors `water` in the client. */
 function water(into: number, beyond: number): number {
   if (into > 0 && beyond > 0) return Math.min(into, beyond);
@@ -138,6 +149,7 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   }
   const edge = (d1 - d0) * 0.5;
   let wet = -BRIDGE;
+  const wander = shoreWander(x, y);
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
@@ -148,12 +160,12 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
     }
     // Leave a dry lane before the third field, with rounded bank corners.
     const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    const shore = water(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    const shore = water(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
     const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
     const span2 = (px - bx) ** 2 + (py - by) ** 2;
     const along = Math.sqrt(Math.max(0, span2 - across * across));
-    wet = Math.max(wet, water(shore, along - BRIDGE));
+    wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };

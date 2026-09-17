@@ -83,6 +83,10 @@ export function placeAt(x, y, width, height) {
   }
   const edge = (d1 - d0) * 0.5;
   let wet = -BRIDGE;
+  // One wander for the point, not one per Ditch: it depends on where the point
+  // is and not on which seam is being measured, and `placeAt` is read once per
+  // Tile of the Lawn on both sides.
+  const wander = shoreWander(x, y);
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
@@ -93,12 +97,12 @@ export function placeAt(x, y, width, height) {
     }
     // Leave a dry lane before the third field, with rounded bank corners.
     const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    const shore = water(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    const shore = water(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
     const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
     const span2 = (px - bx) ** 2 + (py - by) ** 2;
     const along = Math.sqrt(Math.max(0, span2 - across * across));
-    wet = Math.max(wet, water(shore, along - BRIDGE));
+    wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
@@ -111,6 +115,21 @@ export function placeAt(x, y, width, height) {
  * the real distance to the corner where the Bridge meets the Ditch: the
  * smaller of the two on its own would call the dry Bridge wet, and seal it.
  */
+/**
+ * How far the shoreline of a Ditch wanders from the straight, in Tiles.
+ *
+ * Without it the water is a rectangle: `across` and `along` are the two sides
+ * of a box drawn in the seam's own frame, and a box is what gets drawn. The
+ * lane already wanders for the same reason, and the earth around a tree does
+ * too. Three sines of the unwarped point, mean zero, so the Ditch keeps its
+ * width on average and only its edge moves.
+ */
+function shoreWander(x, y) {
+  return 0.55 * Math.sin(x * 0.23 + y * 0.17)
+    + 0.3 * Math.sin(x * 0.11 - y * 0.31)
+    + 0.16 * Math.sin(x * 0.47 + y * 0.39);
+}
+
 function water(into, beyond) {
   if (into > 0 && beyond > 0) return Math.min(into, beyond);
   const dx = Math.max(0, -into), dy = Math.max(0, -beyond);
@@ -249,6 +268,13 @@ fn warpPoint(p : vec2f) -> vec2f {
                p.y + 7.0 * sin(p.x * 0.045) + 2.6 * sin(p.x * 0.103 + 1.3));
 }
 
+/** The same answer as \`shoreWander\` in this file. */
+fn shoreWander(p : vec2f) -> f32 {
+  return 0.55 * sin(p.x * 0.23 + p.y * 0.17)
+    + 0.30 * sin(p.x * 0.11 - p.y * 0.31)
+    + 0.16 * sin(p.x * 0.47 + p.y * 0.39);
+}
+
 /** The same answer as \`water\` in this file, in the shader's own words. */
 fn waterDepth(into : f32, beyond : f32) -> f32 {
   if (into > 0.0 && beyond > 0.0) { return min(into, beyond); }
@@ -271,6 +297,7 @@ fn placeAt(p : vec2f) -> vec3f {
   }
   let edge = (d1 - d0) * 0.5;
   var wet = -BRIDGE;
+  let wander = shoreWander(p);
   let ditches = array<vec2i, ${DITCHES.length}>(${DITCHES.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
   for (var i = 0; i < ${DITCHES.length}; i = i + 1) {
     let a = ditches[i].x;
@@ -281,11 +308,11 @@ fn placeAt(p : vec2f) -> vec3f {
       if (k != a && k != b) { third = min(third, distances[k]); }
     }
     let end = (third - max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    let shore = waterDepth(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    let shore = waterDepth(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     let mid = (seeds[a] + seeds[b]) * 0.5 * C.misc2.xy;
     let offset = q - mid;
     let along = sqrt(max(0.0, dot(offset, offset) - across * across));
-    wet = max(wet, waterDepth(shore, along - BRIDGE));
+    wet = max(wet, waterDepth(shore, along - BRIDGE + wander));
   }
   return vec3f(edge, wet, f32(first));
 }
