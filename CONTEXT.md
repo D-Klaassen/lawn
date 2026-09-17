@@ -238,7 +238,13 @@ dazes itself. A rewritten client therefore cannot hold anybody: the answer to
 
 ## An Emote is read from across the Lawn
 
-An Emote is a card in the air, and a card too small is a card nobody reads at
+An Emote is held on E, and not on the space bar. The hand that drives lies on
+W A S D, and E is under the finger beside it; a thumb on the space bar is a
+hand that has left the wheel. Space is nobody's key now, so it goes back to
+the buttons on the page: a visitor who tabs to one and presses it has it
+press.
+
+A card in the air, and a card too small is a card nobody reads at
 the far side of a field. The card is therefore wide, and two things keep it
 clear of the Mower that sent it.
 
@@ -276,6 +282,13 @@ says what the map says.
 
 The map is held, like the board, and not switched on. A key you hold cannot be
 left on, so a hand that leaves the keyboard always leaves the Lawn in view.
+
+Everything else in that corner is measured from the map and not from a guess
+at how big the map is. `drawMap` publishes `--map-top` and `--map-side` when
+they move; the keys stand on the first of those, the World Quest Tracker
+stops its list above the keys, and the touch buttons stand beside them. The
+map is sized against the window, so a corner measured in fixed pixels is a
+corner that overlaps itself on some window nobody tried.
 
 ## The Lawn decides where a Mower is
 
