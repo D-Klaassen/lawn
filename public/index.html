@@ -633,7 +633,8 @@
 import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
-import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
+import { TREES, treeMesh } from '/trees.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
@@ -1705,21 +1706,21 @@ function bump(id, x, y, now, closing) {
   if (connected) send({ t: "bump" });
 }
 
-/** Water this Mower cannot drive into. The bank is as far as it gets. */
-function wet(x, y) {
-  return wetAt(x, y, W, H) > -COLLISION_RADIUS;
+/** Clearance keeps the wheels outside banks and trunks. */
+function obstacle(x, y) {
+  return blocked(x, y, W, H, COLLISION_RADIUS);
 }
 
 /**
- * Take one step, and keep out of the Ditches. A step that ends in the water
+ * Take one step around banks and trunks. A step that ends in an obstacle
  * is tried again along each axis on its own, so a Mower that meets a bank at
  * an angle slides along it instead of stopping dead. A Mower that is somehow
- * already in the water is not held there: it may always move.
+ * already inside an obstacle is allowed to escape.
  */
 function stepAshore(x, y, dx, dy) {
-  if (!wet(x + dx, y + dy) || wet(x, y)) return [x + dx, y + dy];
-  if (dx !== 0 && !wet(x + dx, y)) return [x + dx, y];
-  if (dy !== 0 && !wet(x, y + dy)) return [x, y + dy];
+  if (!obstacle(x + dx, y + dy) || obstacle(x, y)) return [x + dx, y + dy];
+  if (dx !== 0 && !obstacle(x + dx, y)) return [x + dx, y];
+  if (dy !== 0 && !obstacle(x, y + dy)) return [x, y + dy];
   return [x, y];
 }
 
@@ -2592,6 +2593,44 @@ fn fs_mower(i : MOut) -> @location(0) vec4f {
   return vec4f(shade(base, normalize(i.nrm), i.wpos, 1.0), 1.0);
 }
 
+/* ---------------- trees ---------------- */
+const TREE_PLACES = array<vec3f, ${TREES.length}>(
+  ${TREES.map(t => `vec3f(${t.map(n => n.toFixed(3)).join(',')})`).join(',')}
+);
+fn treeWorld(v : MVertex, ii : u32) -> vec3f {
+  let t = TREE_PLACES[ii];
+  return vec3f(t.x * C.misc2.x, 0, t.y * C.misc2.y) + v.local * t.z;
+}
+@vertex
+fn vs_tree(v : MVertex, @builtin(instance_index) ii : u32) -> MOut {
+  var o : MOut;
+  o.wpos = treeWorld(v, ii);
+  o.pos = C.viewProj * vec4f(o.wpos, 1);
+  o.nrm = v.normal;
+  o.panel = v.material;
+  o.tint = mix(vec3f(0.16, 0.32, 0.065), vec3f(0.35, 0.48, 0.12), v.material / 3.0);
+  if (v.material < 0.5) { o.tint = vec3f(0.28, 0.16, 0.075); }
+  return o;
+}
+@vertex
+fn vs_tree_shadow(v : MVertex, @builtin(instance_index) ii : u32) -> @builtin(position) vec4f {
+  return C.lightVP * vec4f(treeWorld(v, ii), 1);
+}
+@fragment
+fn fs_tree(i : MOut) -> @location(0) vec4f {
+  let colour = shade(i.tint, normalize(i.nrm), i.wpos, 1.0);
+  let mower = C.viewProj * vec4f(C.mowers[0].x, 1.0, C.mowers[0].y, 1);
+  let fragment = C.viewProj * vec4f(i.wpos, 1);
+  let delta = (fragment.xy / fragment.w - mower.xy / mower.w) / vec2f(C.eye.w, C.sun.w);
+  let nearMower = 1.0 - smoothstep(0.055, 0.14, length(delta));
+  // Screen-door transparency keeps depth and shadows stable without sorting crowns.
+  let coverage = 1.0 - nearMower * 0.92;
+  let bayer = array<f32, 16>(0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+  let pattern = (bayer[u32(i.pos.x) % 4u + (u32(i.pos.y) % 4u) * 4u] + 0.5) / 16.0;
+  if (fragment.z / fragment.w < mower.z / mower.w && pattern > coverage) { discard; }
+  return vec4f(colour, 1);
+}
+
 /* ---------------- the ball ---------------- */
 fn ballNormal(vi : u32) -> vec3f {
   let corners = array<vec2f, 6>(vec2f(0, 0), vec2f(1, 0), vec2f(0, 1),
@@ -2807,7 +2846,7 @@ async function initField() {
   ] }];
   const mk = (vs, fs, topology) => device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [mainLayout] }),
-    vertex: { module, entryPoint: vs, buffers: vs.startsWith("vs_mower") ? mowerLayout : [] },
+    vertex: { module, entryPoint: vs, buffers: (vs.startsWith("vs_mower") || vs.startsWith("vs_tree")) ? mowerLayout : [] },
     fragment: { module, entryPoint: fs, targets: [{ format }] },
     primitive: { topology, cullMode: "none" },
     depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: "less" },
@@ -2815,7 +2854,7 @@ async function initField() {
   });
   const caster = (vs, topology) => device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [castLayout] }),
-    vertex: { module, entryPoint: vs, buffers: vs.startsWith("vs_mower") ? mowerLayout : [] },
+    vertex: { module, entryPoint: vs, buffers: (vs.startsWith("vs_mower") || vs.startsWith("vs_tree")) ? mowerLayout : [] },
     primitive: { topology, cullMode: "none" },
     depthStencil: {
       format: shadowFormat, depthWriteEnabled: true, depthCompare: "less",
@@ -2830,6 +2869,8 @@ async function initField() {
   const mowers = mk("vs_mower", "fs_mower", "triangle-list");
   const bladesCast = caster("vs_blade_shadow", "triangle-strip");
   const mowersCast = caster("vs_mower_shadow", "triangle-list");
+  const trees = mk("vs_tree", "fs_tree", "triangle-list");
+  const treesCast = caster("vs_tree_shadow", "triangle-list");
   const ballDraw = mk("vs_ball", "fs_ball", "triangle-list");
   const ballCast = caster("vs_ball_shadow", "triangle-list");
   const bake = device.createRenderPipeline({
@@ -2846,6 +2887,10 @@ async function initField() {
   const growFlowers = grower("cs_flowers");
   const growClover = grower("cs_clover");
 
+  const treeData = treeMesh();
+  const treeBuffer = device.createBuffer({ size: treeData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(treeBuffer, 0, treeData);
+  const treeVertices = treeData.length / 7;
   const mesh = mowerMesh();
   const mowerBuffer = device.createBuffer({ size: mesh.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(mowerBuffer, 0, mesh);
@@ -2902,6 +2947,7 @@ async function initField() {
 
   return {
     device, ctx, format, depthFormat, cam, mowerBuffer, mowerVertices,
+    trees, treesCast, treeBuffer, treeVertices,
     ballDraw, ballCast, blades, ground, flowers, clover, mowers, bladesCast, mowersCast, grow, growFlowers, growClover, bake,
     bindCast, bindFor, bindMain: null, bindGrow: null, shadowView,
     drawArgs, drawReset: new Uint32Array([(SEGS + 1) * 2, 0, 0, 0]),
@@ -3149,6 +3195,9 @@ function render(now, ts, dt) {
     castPass.draw(F.mowerVertices, ms.length);
   }
   if (ball) { castPass.setPipeline(F.ballCast); castPass.draw(32 * 20 * 6); }
+  castPass.setPipeline(F.treesCast);
+  castPass.setVertexBuffer(0, F.treeBuffer);
+  castPass.draw(F.treeVertices, TREES.length);
   castPass.end();
 
   // 3. what you can see
@@ -3173,6 +3222,9 @@ function render(now, ts, dt) {
     pass.draw(F.mowerVertices, ms.length);
   }
   if (ball) { pass.setPipeline(F.ballDraw); pass.draw(32 * 20 * 6); }
+  pass.setPipeline(F.trees);
+  pass.setVertexBuffer(0, F.treeBuffer);
+  pass.draw(F.treeVertices, TREES.length);
   pass.end();
   F.device.queue.submit([enc.finish()]);
 }

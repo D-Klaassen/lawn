@@ -5,14 +5,16 @@
   "scripts": {
     "build:score": "esbuild src/score.js --bundle --format=esm --minify --outfile=public/score.js",
     "build:achievements": "esbuild src/achievements.ts --bundle --format=esm --outfile=public/achievements.js",
-    "predev": "npm run build:score && npm run build:ball && npm run build:achievements",
+    "predev": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees",
     "dev": "wrangler dev",
-    "predeploy": "npm run build:score && npm run build:ball && npm run build:achievements",
+    "predeploy": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "build:ball": "esbuild src/ball.ts --bundle --format=esm --minify --outfile=public/ball.js",
     "test:ball": "npm run build:ball && node scripts/check-ball.mjs",
-    "test:achievements": "npm run build:achievements && node scripts/check-achievements.mjs"
+    "test:achievements": "npm run build:achievements && node scripts/check-achievements.mjs",
+    "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
+    "test:trees": "npm run build:trees && node scripts/check-trees.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",
