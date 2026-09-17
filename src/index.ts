@@ -5,8 +5,8 @@ import { DurableObject } from "cloudflare:workers";
  * last mown. Blade Height is a pure function of the time since that moment, so
  * nothing ticks: the Lawn keeps growing while the Durable Object hibernates.
  */
-const LAWN_WIDTH = 288;
-const LAWN_HEIGHT = 192;
+const LAWN_WIDTH = 408;
+const LAWN_HEIGHT = 272;
 const TILE_COUNT = LAWN_WIDTH * LAWN_HEIGHT;
 
 /**
@@ -85,26 +85,81 @@ function regrowTable(width: number, height: number): Float32Array {
 }
 
 /**
- * Which Field a point belongs to, or -1 for the paths and the verge. It is
- * the same function as `fieldAt` in `public/fields.js` and must stay so: the
- * two sides have to agree on which Tiles are grass, or a score counts blades
- * that were never there. Mirrors the client exactly.
+ * The map: where each seed of a Field sits, in fractions of the Lawn, how
+ * wide a lane and a Ditch are, and which seams carry water. It is the same
+ * table as `public/fields.js` and must stay so: the two sides have to agree
+ * on which Tiles are grass, or a score counts blades that were never there.
  */
-function fieldAt(x: number, y: number, width: number, height: number): number {
-  if (x < 0 || y < 0 || x >= width || y >= height) return -1;
-  const across = height * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13);
-  const along = width * 0.52 + 9 * Math.sin(y * 0.065 + 0.7);
-  const branch = height * 0.22 + 5 * Math.sin(x * 0.07 + 1.8);
-  const verge = 2.1 + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  if (Math.min(Math.abs(y - across), Math.abs(x - along), Math.abs(y - branch)) <= verge) return -1;
-  const row = y < branch ? 0 : y < across ? 1 : 2;
-  return row * 2 + (x < along ? 0 : 1);
+const SEEDS: [number, number][] = [
+  [0.15, 0.19], [0.47, 0.13], [0.83, 0.20],
+  [0.13, 0.53], [0.44, 0.46], [0.79, 0.51],
+  [0.19, 0.85], [0.52, 0.81], [0.86, 0.84],
+];
+const LANE = 2.3;
+const DITCH = 2.6;
+const BANK = 1.6;
+const BRIDGE = 6;
+const DITCH_KEYS = new Set([[1, 4], [3, 4], [5, 8], [6, 7]]
+  .map(([a, b]) => Math.min(a, b) * SEEDS.length + Math.max(a, b)));
+
+function warpX(x: number, y: number): number {
+  return x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
+}
+function warpY(x: number, y: number): number {
+  return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
 }
 
-/** Grass grows on a Field. Nothing grows on a path or a verge. */
-function onGrass(x: number, y: number): boolean {
-  return fieldAt(x, y, LAWN_WIDTH, LAWN_HEIGHT) >= 0;
+/** How far a point lies inside the water. Mirrors `water` in the client. */
+function water(into: number, beyond: number): number {
+  if (into > 0 && beyond > 0) return Math.min(into, beyond);
+  const dx = Math.max(0, -into), dy = Math.max(0, -beyond);
+  return -Math.sqrt(dx * dx + dy * dy);
 }
+
+/**
+ * Where a point stands on the Lawn: the Field that owns it, or -1 for a lane,
+ * a bank or the water, and how far it lies inside the water. Mirrors
+ * `placeAt` in `public/fields.js` exactly.
+ */
+function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
+  const px = warpX(x, y), py = warpY(x, y);
+  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
+  for (let k = 0; k < SEEDS.length; k++) {
+    const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d1 = d; second = k; }
+  }
+  const edge = (d1 - d0) * 0.5;
+  if (!DITCH_KEYS.has(Math.min(first, second) * SEEDS.length + Math.max(first, second))) {
+    const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+    return { field: edge <= lane ? -1 : first, wet: -BRIDGE };
+  }
+  const bx = (SEEDS[first][0] + SEEDS[second][0]) * 0.5 * width;
+  const by = (SEEDS[first][1] + SEEDS[second][1]) * 0.5 * height;
+  const span = Math.sqrt((px - bx) * (px - bx) + (py - by) * (py - by));
+  const along = Math.sqrt(Math.max(0, span * span - edge * edge));
+  const wet = water(DITCH - edge, along - BRIDGE);
+  if (wet > 0) return { field: -1, wet };
+  return { field: wet > -BANK || along <= BRIDGE ? -1 : first, wet };
+}
+
+/** Grass grows on a Field. Nothing grows on a lane, a bank or the water. */
+function onGrass(x: number, y: number): boolean {
+  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).field >= 0;
+}
+
+/** Open water. No Mower drives here, whatever its client says. */
+function inWater(x: number, y: number): boolean {
+  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > 0;
+}
+
+/**
+ * How far apart the Lawn reads the swath while it looks for water. A Ditch is
+ * `2 * DITCH` Tiles wide, so a step this short can never stride over one.
+ */
+const WATER_STEP = 0.75;
 
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
 
@@ -179,6 +234,37 @@ const MOWERS_PER_ADDRESS = 12;
 /** How many Emotes the wheel offers. The client holds the pictures. */
 const EMOTE_COUNT = 4;
 const STORAGE_KEY = "mownAt";
+/**
+ * The Tiles are one array, and a storage value holds at most 128 KiB, so the
+ * array is written in chunks. The size of a chunk is not part of the format:
+ * the chunks are read back in order and joined, so a Lawn written before this
+ * one grew still loads.
+ */
+const CHUNK_BYTES = 96 * 1024;
+const CHUNK_COUNT = Math.ceil((TILE_COUNT * 4) / CHUNK_BYTES);
+const chunkKey = (k: number) => (k === 0 ? STORAGE_KEY : `${STORAGE_KEY}:${k}`);
+
+async function readChunks(storage: DurableObjectStorage): Promise<ArrayBuffer | undefined> {
+  // Read one key more than this Lawn writes, so a Lawn saved in smaller
+  // chunks is still read whole.
+  const keys = Array.from({ length: CHUNK_COUNT + 4 }, (_, k) => chunkKey(k));
+  const stored = await storage.get<ArrayBuffer>(keys);
+  const parts: ArrayBuffer[] = [];
+  for (const key of keys) {
+    const part = stored.get(key);
+    if (!part) break;
+    parts.push(part);
+  }
+  if (!parts.length) return undefined;
+  if (parts.length === 1) return parts[0];
+  const joined = new Uint8Array(parts.reduce((n, part) => n + part.byteLength, 0));
+  let at = 0;
+  for (const part of parts) {
+    joined.set(new Uint8Array(part), at);
+    at += part.byteLength;
+  }
+  return joined.buffer;
+}
 const STROKE_KEY = "strokes";
 const SCORE_KEY = "scores";
 /**
@@ -307,21 +393,13 @@ export class Lawn extends DurableObject {
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
     ctx.blockConcurrencyWhile(async () => {
-      const chunks = await ctx.storage.get<ArrayBuffer>([STORAGE_KEY, `${STORAGE_KEY}:1`]);
-      const first = chunks.get(STORAGE_KEY);
-      const second = chunks.get(`${STORAGE_KEY}:1`);
-      let stored = first;
-      if (first && second) {
-        const joined = new Uint8Array(first.byteLength + second.byteLength);
-        joined.set(new Uint8Array(first));
-        joined.set(new Uint8Array(second), first.byteLength);
-        stored = joined.buffer;
-      }
+      const stored = await readChunks(ctx.storage);
       this.mownAt =
         stored && stored.byteLength === TILE_COUNT * 4
           ? new Uint32Array(stored.slice(0))
           : new Uint32Array(TILE_COUNT);
-      const oldWidth = stored?.byteLength === 144 * 96 * 4 ? 144
+      const oldWidth = stored?.byteLength === 288 * 192 * 4 ? 288
+        : stored?.byteLength === 144 * 96 * 4 ? 144
         : stored?.byteLength === 72 * 48 * 4 ? 72 : 0;
       if (stored && oldWidth) {
         const oldHeight = oldWidth * 2 / 3;
@@ -564,13 +642,15 @@ export class Lawn extends DurableObject {
     if (!this.dirty) return;
     this.dirty = false;
     this.prune();
-    // Each storage value stays below 128 KiB; save both chunks atomically.
-    await this.ctx.storage.put({
-      [STORAGE_KEY]: this.mownAt.buffer.slice(0, 128 * 1024),
-      [`${STORAGE_KEY}:1`]: this.mownAt.buffer.slice(128 * 1024),
+    // Each storage value stays below 128 KiB; save every chunk atomically.
+    const write: Record<string, unknown> = {
       [STROKE_KEY]: this.strokes,
       [SCORE_KEY]: [...this.scores],
-    });
+    };
+    for (let k = 0; k < CHUNK_COUNT; k++) {
+      write[chunkKey(k)] = this.mownAt.buffer.slice(k * CHUNK_BYTES, (k + 1) * CHUNK_BYTES);
+    }
+    await this.ctx.storage.put(write);
   }
 
   /**
@@ -756,13 +836,34 @@ export class Lawn extends DurableObject {
     const distance = Math.hypot(dx, dy);
     if (distance === 0) return { x, y };
     const budget = this.refill(this.travelBudgets, purse, TRAVEL_RATE, TRAVEL_BANK);
-    if (distance <= budget.tokens) {
-      budget.tokens -= distance;
-      return { x, y };
-    }
-    const k = budget.tokens / distance;
-    budget.tokens = 0;
+    const allowed = Math.min(distance, budget.tokens);
+    const dry = this.dryRun(from, dx / distance, dy / distance, allowed);
+    budget.tokens -= dry;
+    // The claim itself, and not a point worked back to it: the caller reads
+    // an answer that differs from the claim as a swath it has to put right.
+    if (dry >= distance) return { x, y };
+    const k = dry / distance;
     return { x: from.x + dx * k, y: from.y + dy * k };
+  }
+
+  /**
+   * How far a Mower really gets along its swath: as far as it asked for, or
+   * as far as the near bank of a Ditch. A Mower cannot drive through water,
+   * so neither can a client that says it did — the Lawn stops the swath at
+   * the water's edge and sends that Mower the Lawn as the Lawn sees it.
+   *
+   * An honest Mower is never held back here. Its own client keeps it a whole
+   * Mower's width from the water, and this stops only at the water itself.
+   */
+  private dryRun(from: Place, ux: number, uy: number, distance: number): number {
+    for (let travelled = WATER_STEP; travelled < distance; travelled += WATER_STEP) {
+      if (inWater(from.x + ux * travelled, from.y + uy * travelled)) {
+        return Math.max(0, travelled - WATER_STEP);
+      }
+    }
+    return inWater(from.x + ux * distance, from.y + uy * distance)
+      ? Math.max(0, Math.floor(distance / WATER_STEP) * WATER_STEP - WATER_STEP)
+      : distance;
   }
 
   /**

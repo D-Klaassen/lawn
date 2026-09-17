@@ -313,7 +313,7 @@
 
 <script type="module">
 import { landScore, updateScore } from '/score.js';
-import { fieldAt, FIELD_NAMES, createFieldQuests } from '/fields.js';
+import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
 /* ------------------------------------------------------------------ *
  * The Lawn: one shared field, one Durable Object, many Mowers.
@@ -429,7 +429,7 @@ let myHue = 80;
 
 /** A Snapshot entry is how far a Tile is through its Regrowth, at this scale. */
 const SNAPSHOT_SCALE = 65535;
-let W = 288, H = 192, RADIUS = 2.6;
+let W = 408, H = 272, RADIUS = 2.6;
 /** Milliseconds of Regrowth per Tile. The server says how to build it. */
 let regrowMs = null;
 /** Milliseconds a Tile stays mown before it grows. The server says how long. */
@@ -474,7 +474,7 @@ function throwClippings(x, y, heading, amount) {
 const peers = new Map();
 
 /** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
-const me = { x: 144, y: 96, a: -Math.PI / 2, v: 0 };
+const me = { x: 204, y: 136, a: -Math.PI / 2, v: 0 };
 const POSITION_KEY = "lawn:mower-position";
 /**
  * The Mower Key says whose tally this is. The Lawn makes it, holds the score
@@ -494,11 +494,17 @@ let positionReady = false, positionSavedAt = 0, savedPosition = "";
 function restorePosition() {
   if (positionReady) return;
   positionReady = true;
+  const middle = dryStart(W, H, W / 2, H / 2, COLLISION_RADIUS);
+  me.x = middle.x; me.y = middle.y;
   try {
     const p = JSON.parse(localStorage.getItem(POSITION_KEY));
     if (!p || ![p.x, p.y, p.a].every(Number.isFinite)) return;
-    me.x = Math.max(COLLISION_RADIUS, Math.min(W - COLLISION_RADIUS, p.x));
-    me.y = Math.max(COLLISION_RADIUS, Math.min(H - COLLISION_RADIUS, p.y));
+    const x = Math.max(COLLISION_RADIUS, Math.min(W - COLLISION_RADIUS, p.x));
+    const y = Math.max(COLLISION_RADIUS, Math.min(H - COLLISION_RADIUS, p.y));
+    // The Lawn is not the Lawn it was last visit: a Mower whose last place is
+    // now water is put down on the nearest dry ground instead of in a Ditch.
+    const dry = dryStart(W, H, x, y, COLLISION_RADIUS);
+    me.x = dry.x; me.y = dry.y;
     me.a = p.a;
     me.v = 0;
   } catch { /* Storage may be unavailable or contain an old invalid value. */ }
@@ -679,6 +685,10 @@ function connect() {
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
+      // Paint the map now, while the Lawn is still arriving. It is the same
+      // walk over every Tile the quests just made, and doing it here keeps it
+      // out of the first frame the Mower asks for the map.
+      mapImage();
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes;
@@ -1019,6 +1029,24 @@ function bump(id, x, y, now, closing) {
   if (connected) send({ t: "bump" });
 }
 
+/** Water this Mower cannot drive into. The bank is as far as it gets. */
+function wet(x, y) {
+  return wetAt(x, y, W, H) > -COLLISION_RADIUS;
+}
+
+/**
+ * Take one step, and keep out of the Ditches. A step that ends in the water
+ * is tried again along each axis on its own, so a Mower that meets a bank at
+ * an angle slides along it instead of stopping dead. A Mower that is somehow
+ * already in the water is not held there: it may always move.
+ */
+function stepAshore(x, y, dx, dy) {
+  if (!wet(x + dx, y + dy) || wet(x, y)) return [x + dx, y + dy];
+  if (dx !== 0 && !wet(x + dx, y)) return [x + dx, y];
+  if (dy !== 0 && !wet(x, y + dy)) return [x, y + dy];
+  return [x, y];
+}
+
 function moveMower(dx, dy, now) {
   const radius = COLLISION_RADIUS;
   const gap = radius * 2;
@@ -1026,8 +1054,7 @@ function moveMower(dx, dy, now) {
   // Small steps keep a fast mower from crossing another between frames.
   const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (radius * 0.5)));
   for (let step = 0; step < steps; step++) {
-    me.x += dx / steps;
-    me.y += dy / steps;
+    [me.x, me.y] = stepAshore(me.x, me.y, dx / steps, dy / steps);
     for (let pass = 0; pass < 4; pass++) {
       for (const [id, p] of peers) {
         if (now - p.seen > PEER_TIMEOUT) continue;
@@ -1041,8 +1068,8 @@ function moveMower(dx, dy, now) {
         // between them. Two Mowers driving side by side touch at nothing.
         const closing = ((p.vx ?? 0) - mvx) * nx + ((p.vy ?? 0) - mvy) * ny;
         bump(id, p.x + nx * radius, p.y + ny * radius, now, closing);
-        me.x += nx * (gap - distance);
-        me.y += ny * (gap - distance);
+        // A shove is a step like any other: it stops at the bank as well.
+        [me.x, me.y] = stepAshore(me.x, me.y, nx * (gap - distance), ny * (gap - distance));
       }
       me.x = Math.max(radius, Math.min(W - radius, me.x));
       me.y = Math.max(radius, Math.min(H - radius, me.y));
@@ -1278,15 +1305,15 @@ fn vnoise(p : vec2f) -> f32 {
              mix(hash1(i + vec2f(0.0, 1.0)), hash1(i + vec2f(1.0, 1.0)), u.x), u.y);
 }
 
-// Shared by the soil and blades so the verge follows the same curves.
-fn pathGrass(p : vec2f) -> f32 {
-  let across = C.misc2.y * 0.5 + 7.0 * sin(p.x * 0.055) + 3.0 * sin(p.x * 0.13);
-  let along = C.misc2.x * 0.52 + 9.0 * sin(p.y * 0.065 + 0.7);
-  let branch = C.misc2.y * 0.22 + 5.0 * sin(p.x * 0.07 + 1.8);
-  let dist = min(min(abs(p.y - across), abs(p.x - along)), abs(p.y - branch));
-  let width = 1.65 + 0.35 * sin(p.x * 0.19 + p.y * 0.11);
-  let fringe = (vnoise(p * 1.2) - 0.5) * 0.7;
-  return smoothstep(width, width + 1.8, dist + fringe);
+// The map itself, built from the one table in fields.js: the Fields, the
+// lanes between them and the Ditches. The ground a Mower drives on and the
+// ground it sees are therefore the same map, and cannot drift apart.
+${MAP_WGSL}
+
+/** The face of the water, for its normal. It drifts with the clock. */
+fn ripple(p : vec2f, t : f32) -> f32 {
+  return vnoise(p * 1.7 + vec2f(t * 0.32, t * 0.07)) * 0.62
+       + vnoise(p * 3.9 - vec2f(t * 0.44, t * 0.11)) * 0.38;
 }
 
 fn cloverDensity(root : vec2f) -> f32 {
@@ -1558,7 +1585,32 @@ fn vs_ground(@builtin(vertex_index) vi : u32) -> GOut {
 @fragment
 fn fs_ground(i : GOut) -> @location(0) vec4f {
   let w3 = vec3f(i.w.x, -0.015, i.w.y);
-  return vec4f(shade(groundColour(i.w), vec3f(0.0, 1.0, 0.0), w3, 1.0), 1.0);
+  var n = vec3f(0.0, 1.0, 0.0);
+  var base = groundColour(i.w);
+  let depth = waterAt(i.w);
+  let wetness = smoothstep(-0.15, 0.55, depth);
+  if (wetness > 0.0) {
+    // A face of moving water, from the slope of the ripple either side.
+    let e = 0.4;
+    let h0 = ripple(i.w, C.misc.x);
+    let slope = vec2f(ripple(i.w + vec2f(e, 0.0), C.misc.x) - h0,
+                      ripple(i.w + vec2f(0.0, e), C.misc.x) - h0) * (2.6 / e);
+    n = normalize(mix(n, normalize(vec3f(-slope.x, 1.0, -slope.y)), wetness));
+    // Shallow water keeps the colour of the bed; deep water loses it.
+    let deep = smoothstep(0.0, DITCH, depth);
+    base = mix(base, mix(vec3f(0.22, 0.34, 0.28), vec3f(0.05, 0.15, 0.19), deep), wetness);
+  }
+  // The daze of the shadow map may only be read from uniform control flow,
+  // so the water changes what is shaded and never whether it is shaded.
+  var col = shade(base, n, w3, 1.0);
+  let view = normalize(C.eye.xyz - w3);
+  // A shader that uses a WGSL reserved word is dropped in silence, and the
+  // usual name for this vector is one of them. It is the half vector.
+  let midway = normalize(normalize(C.sun.xyz) + view);
+  // The sun on the water, and the sky lying on it at a low angle.
+  col += C.sunCol.rgb * pow(max(dot(n, midway), 0.0), 48.0) * wetness * 0.85;
+  col = mix(col, C.skyCol.rgb, wetness * 0.18 * (1.0 - abs(dot(n, view))));
+  return vec4f(col, 1.0);
 }
 
 /* ---------------- wildflowers ---------------- */
@@ -2560,6 +2612,18 @@ function mapOrigin(view, world, centre) {
   return Math.max(0, Math.min(world - view, centre - view / 2));
 }
 
+/** The whole map as one picture, painted once per size of Lawn. */
+let mapPicture = null, mapPictureFor = "";
+
+function mapImage() {
+  const size = `${W}x${H}`;
+  if (mapPictureFor !== size) {
+    mapPicture = buildMapImage(W, H, 2);
+    mapPictureFor = size;
+  }
+  return mapPicture;
+}
+
 /** Where a Field's name belongs: the middle of the Tiles the Field owns. */
 let fieldMarks = [], fieldMarksFor = "";
 
@@ -2605,23 +2669,14 @@ function paintMap(left, top, width, height, viewW, centreX, centreY, dpr, naming
   g.save();
   g.fillStyle = "#536d35";
   g.fillRect(left, top, width, height);
-  g.strokeStyle = "#a38a60";
-  g.lineWidth = Math.max(2, sx * 4);
-  g.lineJoin = "round";
-  g.lineCap = "round";
-  const paths = [
-    [W, x => [x, H * 0.5 + 7 * Math.sin(x * 0.055) + 3 * Math.sin(x * 0.13)]],
-    [H, y => [W * 0.52 + 9 * Math.sin(y * 0.065 + 0.7), y]],
-    [W, x => [x, H * 0.22 + 5 * Math.sin(x * 0.07 + 1.8)]],
-  ];
-  for (const [length, sample] of paths) {
-    g.beginPath();
-    for (let i = 0; i <= length; i += 2) {
-      const p = point(...sample(i));
-      if (i === 0) g.moveTo(...p); else g.lineTo(...p);
-    }
-    g.stroke();
-  }
+  // The window on the Lawn, cut out of the one picture of it. The map is
+  // therefore the map: every parcel, every lane and every Ditch, and nothing
+  // drawn a second time by hand. Only the window is drawn, so the corner map
+  // costs what the corner shows and not what the whole Lawn would.
+  const picture = mapImage();
+  const perTile = picture.width / W;
+  g.drawImage(picture, originX * perTile, originY * perTile, viewW * perTile, viewH * perTile,
+    mapX, mapY, mapW, mapH);
   if (naming > 0) {
     g.globalAlpha = naming;
     g.font = `${Math.round(Math.max(11, width * 0.021))}px Georgia, serif`;
@@ -2665,6 +2720,13 @@ const mapReady = () => minimapFrame.complete && minimapFrame.naturalWidth
   && minimapOpening.complete && minimapOpening.naturalWidth;
 
 /**
+ * How much of the Lawn the corner map holds, in Tiles. It is a neighbourhood
+ * and not the Lawn: wide enough to hold the near bank of a Ditch and the
+ * Bridge that crosses it, so a Mower can see where to drive round.
+ */
+const CORNER_VIEW = 110;
+
+/**
  * The minimap owns the bottom right corner, so the touch buttons have to know
  * how much of it the map has taken. Both edges are published as a length in
  * from the bottom and the right, and only when they move: this runs every
@@ -2700,7 +2762,7 @@ function drawMap(cw, ch, dpr) {
   // The window on the Lawn widens by the same factor every frame, so the
   // ground under the frame runs out at an even pace rather than bolt at the
   // end. Each step of the walk out is worth as much as the last.
-  const view = 90 * Math.pow(bigView / 90, shift);
+  const view = CORNER_VIEW * Math.pow(bigView / CORNER_VIEW, shift);
   // A map that fills the screen has the room to name the Fields; the corner
   // has room for none of it, so the names arrive with the space to hold them.
   const naming = Math.max(0, (shift - 0.45) / 0.55);

@@ -6,11 +6,22 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 ## Ubiquitous language
 
 - **Lawn** — the one shared field. One Durable Object instance, name `the-lawn`.
-- **Tile** — one cell of the Lawn. The grid is 72 x 48 = 3456 Tiles.
+- **Tile** — one cell of the Lawn. The grid is 408 x 272 = 110,976 Tiles.
 - **Blade Height** — how tall the grass on a Tile is, from 0 (mown) to 1
   (fully overgrown).
 - **Mow Stroke** — the swath between two pointer positions. The Mower cuts a
   capsule with radius `MOW_RADIUS` around that line.
+- **Field** — one parcel of the Lawn, and one quest. There are nine. A Field
+  is the ground that lies nearer its own seed than any other seed, so no
+  Field is a box and no two are the same shape.
+- **Lane** — the bare seam between two Fields. Nothing grows on it and every
+  Mower drives over it.
+- **Ditch** — a seam that carries water instead of a lane. A Mower cannot
+  enter it: it is the one thing on the Lawn that says no.
+- **Bridge** — the dry crossing that cuts every Ditch, at the middle point
+  between the two seeds the Ditch runs between. It is what keeps a Ditch a
+  detour and not a wall.
+- **Bank** — the bare ground between the water and the grass.
 - **Report** — the one message a Mower sends about itself: where it is and
   which way it points. It is the Mow Stroke and the position at once, because
   both say the same thing about the same movement. See "What a report costs".
@@ -55,6 +66,60 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   spans the whole Cycle and not the Regrowth alone, so one entry still says
   everything about one Tile.
 
+## One table draws the map
+
+The map is not a drawing and it is not stored. One table of nine seeds says
+where each Field sits, in fractions of the Lawn, and everything else follows
+from it: a point belongs to the Field whose seed is nearest, the seam between
+two Fields is where the two nearest seeds are the same distance away, and a
+seam named in `DITCHES` carries water. The ground is bent by a pair of sines
+before the seeds are measured against it, so no seam is a straight line.
+
+That shape is why the Lawn can grow. Nothing in the map is tied to 408 x 272:
+the seeds are fractions, so the same table draws the same map on a bigger
+Lawn, and the Fields keep their names and their places.
+
+There are three readers of that table, and only one writer of it. The client
+and the minimap import `public/fields.js`. The shader is handed its own copy
+of the map as WGSL, built from the same table by that same file, so the
+ground a Mower drives on and the ground it sees cannot drift apart. The Lawn
+keeps a mirror in `src/index.ts`, for the same reason it mirrors the Growth
+Rate: it counts the blades, so it has to know which Tiles are grass. That one
+copy must stay identical.
+
+`node scripts/check-map.mjs` reads the map the way a Mower does and says
+whether it holds together: how much of the Lawn is grass, lane and water, and
+whether every Tile of every Field can still be cut.
+
+## The water says no, and the Lawn says it too
+
+A Ditch is the first thing on the Lawn a Mower cannot drive through, so both
+sides have to hold it. The client keeps a Mower a whole Mower's width from
+the water, and a step that would end in a Ditch is tried again along each
+axis on its own, so a Mower that meets a bank at an angle slides along it
+instead of stopping dead.
+
+The Lawn then walks every swath before it cuts it, in steps of 0.75 Tiles —
+short enough that no step strides over water 5.2 Tiles wide — and stops the
+swath at the water's edge. A client that says it swam gets the near bank and
+a fresh Snapshot.
+
+This costs an honest Mower nothing. Its own client already holds it 2.2 Tiles
+from the water, and the Lawn stops only at the water itself, so the two
+never disagree. What it closes is the whole of the gain: the far bank stands
+6.8 Tiles from the near water's edge and a Mow Stroke reaches 2.6, so no
+Mower cuts across a Ditch, however its client is written.
+
+One hole stays open, and it is the one that was already there: a Mower the
+Lawn has not seen is believed once, so a reconnection can put a Mower down on
+the far side of a Ditch. It cuts nothing on the way — the first Mow Stroke of
+a Mower only says where it starts — so a Ditch costs a cheat one reconnection
+and buys it no grass.
+
+Every Ditch is cut by one Bridge, and `scripts/check-map.mjs` proves the
+result is one piece of ground: if it were not, a Field behind the water could
+never reach 100% and its quest could never be completed.
+
 ## Why there is no server tick
 
 The Durable Object stores one number per Tile: the epoch second of the last
@@ -66,7 +131,8 @@ Tile is. Therefore:
   Durable Object hibernates.
 - The client uses the same function, so it animates growth with no traffic.
   The server sends only Mow Strokes.
-- The state is 13.8 kB (`Uint32Array`), and it stays that size for ever.
+- The state is 444 kB (`Uint32Array`), and it stays that size for ever. It is
+  written in chunks, because one storage value holds 128 KiB.
 
 An alarm exists, but only to write the state to storage 10 seconds after a
 change. It is a debounce, not a simulation step. See "What a report costs".
@@ -178,7 +244,7 @@ go and it goes back to its corner. Nothing new fades in over it, so a Mower
 never reads two maps of one Lawn at two scales at the same time.
 
 Two things change while it grows. The window on the Lawn widens by the same
-factor every frame — 90 Tiles across in the corner, the whole Lawn when it is
+factor every frame — 110 Tiles across in the corner, the whole Lawn when it is
 out — so the ground under the frame runs out at an even pace instead of
 bolting at the end. And the names of the Fields arrive late, because a map
 that fills the screen has the room to write them and the corner has room for
@@ -245,7 +311,7 @@ Every socket earns its own travel, so one person with many sockets cuts what
 many visitors cut. Nothing in what a client sends tells the two apart; only
 where it comes from does. The Lawn therefore counts: `MOWERS_PER_ADDRESS`
 sockets from one address at a time, and the next one gets a 429 instead of a
-Lawn. A new socket also costs the Lawn a whole Snapshot of 110 kB, so this
+Lawn. A new socket also costs the Lawn a whole Snapshot of 222 kB, so this
 holds down what it costs to open sockets as well as what they can cut.
 
 The address is a tag on the socket and not a note in memory. The count is then
@@ -430,6 +496,9 @@ both, and the minimap is measured against the height as well as the width.
 
 ## Files
 
+- `public/fields.js` — the map: the seeds, the lanes, the Ditches, and the
+  WGSL the shader is built from. One file, three readers.
+- `scripts/check-map.mjs` — reads that map and says whether it holds together.
 - `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
 - `public/index.html` — the whole client: WebGPU field, driving, socket, HUD.
   The Lawn is drawn as instanced 3D blades under one sun, from a camera that
