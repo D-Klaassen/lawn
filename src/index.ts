@@ -1,4 +1,5 @@
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
+import { FIELD_NAMES, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
 
 /**
@@ -157,11 +158,6 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   return { field: edge <= lane || wet > -BANK ? -1 : first, wet };
 }
 
-/** Grass grows on a Field. Nothing grows on a lane, a bank or the water. */
-function onGrass(x: number, y: number): boolean {
-  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).field >= 0;
-}
-
 /** Open water. No Mower drives here, whatever its client says. */
 function inWater(x: number, y: number): boolean {
   return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > 0;
@@ -174,6 +170,28 @@ function inWater(x: number, y: number): boolean {
 const WATER_STEP = 0.75;
 
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
+
+/**
+ * Which Field owns each Tile, or `NO_FIELD` for a lane, a bank or the water.
+ *
+ * It is the same answer `placeAt` gives, held as a table for the same reason
+ * the Growth Rate is: the Lawn is read Tile by Tile, many times a second, and
+ * `placeAt` measures nine seeds and four Ditches for every read. The Mow
+ * Stroke used to pay that price per Tile to ask whether grass grows there; it
+ * now reads one byte, and gets the Field the Tile belongs to for nothing —
+ * which is what a Harvest is counted from.
+ */
+const NO_FIELD = 255;
+const FIELD_OF = new Uint8Array(TILE_COUNT);
+/** How many Tiles of grass each Field holds. One Harvest is a Field of them. */
+const FIELD_TILES = new Float64Array(FIELD_NAMES.length);
+for (let y = 0; y < LAWN_HEIGHT; y++) {
+  for (let x = 0; x < LAWN_WIDTH; x++) {
+    const field = placeAt(x + 0.5, y + 0.5, LAWN_WIDTH, LAWN_HEIGHT).field;
+    FIELD_OF[y * LAWN_WIDTH + x] = field < 0 ? NO_FIELD : field;
+    if (field >= 0) FIELD_TILES[field] += 1;
+  }
+}
 
 /**
  * How tall the grass on a Tile stands, from 0 to 1. A Tile nobody ever mowed
@@ -298,6 +316,32 @@ const PERSIST_DELAY_MS = 10000;
  */
 const SCORE_KEEP = 200;
 /**
+ * Mowers the Lawn keeps at all, whatever they hold. A Mower that has earned an
+ * Achievement is spared the ordinary pruning, because a lost Score can be mown
+ * again and a lost Achievement cannot — but that exemption has to stop
+ * somewhere, or the Lawn grows without bound. Every Score is written into one
+ * storage value, and one storage value holds 128 KiB; a record runs to some two
+ * hundred bytes, so this leaves the write about a fifth of that limit in hand.
+ * Past it the Lawn forgets the lowest Score it holds, decorated or not.
+ */
+const KEY_KEEP = 500;
+/**
+ * How near two Mowers must be for the Lawn to believe a Bump, in Tiles. A
+ * Mower is about five Tiles wide and the Lawn sees a position up to a report
+ * old, so this is generous on purpose: it is here to catch a Mower that says
+ * it was bumped with nobody beside it, not to referee the contact.
+ */
+const BUMP_REACH = 14;
+/**
+ * How much of the client's `STUN_SPEED` the Lawn asks of a Closing Speed
+ * before it counts a Bump. The Lawn works the speed out from reports 100 ms
+ * apart, so it reads a real ram lower than the client does; asking for the
+ * whole of it would count almost nothing.
+ */
+const BUMP_CLOSING = 3;
+/** How stale a report may be and still say where a Mower was for a Bump. */
+const BUMP_STALE_MS = 1000;
+/**
  * Shortest gap between two tallies sent to the same Mower. The client counts
  * the blades itself so the digits roll smoothly, and this is how often the
  * Lawn overwrites that guess with what it really cut.
@@ -349,6 +393,53 @@ interface Score {
   n: string;
   /** Its blades. */
   c: number;
+  /**
+   * The Achievements it has earned, one bit each. A Score written before
+   * Achievements existed carries none, and earns them on its next Mow Stroke
+   * from what it already holds.
+   */
+  a?: number;
+/**
+   * The blades it has taken off each Field, in the order of `FIELD_NAMES`.
+   *
+   * Blades and not Harvests. A Harvest is a fraction near 1 that grows by
+   * about a two-thousandth per Mow Stroke, and a fraction that is rounded
+   * before it is written down loses a part of every one of those steps: held
+   * to four decimals it lost 7% of a whole Field over one drive across it,
+   * measured. Blades are a number of order ten thousand, so the same rounding
+   * is nothing at all. `tallyOf` does the dividing.
+   */
+  h?: number[];
+  /** Tiles it has driven, as the Lawn drove it. */
+  d?: number;
+  /** Bumps the Lawn saw it in. */
+  b?: number;
+}
+
+/**
+ * Round a running total before it is written down. A Score is one storage
+ * value for every Mower on the Lawn, and the last ten decimal places of a
+ * distance are bytes spent on nothing.
+ */
+function tidy(value: number, places = 4): number {
+  const scale = 10 ** places;
+  return Math.round(value * scale) / scale;
+}
+
+/**
+ * What a Score has done, in the shape the Achievement table reads. The Lawn
+ * keeps the blades it took off each Field; a Harvest is those blades measured
+ * against the size of that Field, so a small Field is not a cheaper
+ * Achievement.
+ */
+function tallyOf(score: Score): Tally {
+  const blades = score.h;
+  return {
+    c: score.c,
+    h: blades ? blades.map((off, field) => off / FIELD_TILES[field]) : emptyTally().h,
+    d: score.d ?? 0,
+    b: score.b ?? 0,
+  };
 }
 
 /** A short random string. Both an id and a name seed are one of these. */
@@ -408,6 +499,12 @@ export class Lawn extends DurableObject {
    */
   private scores!: Map<string, Score>;
   private scoredAt = new WeakMap<WebSocket, number>();
+  /**
+   * The grass the last Mow Stroke took off each Field. It is reused and never
+   * allocated: a Mow Stroke runs many times a second and this says nothing
+   * between one and the next.
+   */
+  private readonly cutByField = new Float64Array(FIELD_NAMES.length);
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -534,6 +631,18 @@ export class Lawn extends DurableObject {
       // before a Lawn that hibernates wakes up. Relay it and store nothing.
       if (!this.spendBump(ws)) return;
       this.broadcast(JSON.stringify({ t: "bumped", id }), ws);
+      // The daze is still relayed on the Mower's word, because a Mower only
+      // ever dazes itself and a liar wearing its own Stars costs nobody
+      // anything. The tally is not: an Achievement is the one thing here
+      // worth forging, so the Lawn counts a Bump only when it saw one.
+      if (key && this.sawBump(ws)) {
+        const score = this.scores.get(key);
+        if (score) {
+          score.b = (score.b ?? 0) + 1;
+          this.award(ws, score);
+          this.schedulePersist();
+        }
+      }
       return;
     }
     if (message?.t !== "mow") return;
@@ -575,10 +684,11 @@ export class Lawn extends DurableObject {
       // The Lawn counts the blades as it cuts them. This is the whole tally:
       // no client adds anything to it and no client is asked what it is.
       const blades = this.mow(from.x, from.y, to.x, to.y);
-      if (blades > 0 && key) {
-        const held = this.scores.get(key);
-        this.scores.set(key, { n: held?.n ?? name, c: (held?.c ?? 0) + blades });
-      }
+      // Tiles driven is what the Lawn drove, not what the Mower asked for: a
+      // client that claims a mile gets as far as its travel allows, and the
+      // ladder is measured on the near end of that.
+      const drove = Math.hypot(to.x - from.x, to.y - from.y);
+      if (key) this.credit(ws, key, name, blades, drove);
       this.strokes += 1;
       this.broadcast(
         JSON.stringify({
@@ -733,9 +843,20 @@ export class Lawn extends DurableObject {
   }
 
   /**
-   * Forget the lowest Scores once the Lawn holds more than it keeps. A Mower
-   * that is driving is never forgotten, whatever it has cut, so nobody loses a
-   * Score while they are earning it.
+   * Forget the lowest Scores once the Lawn holds more than it keeps.
+   *
+   * A Mower that is driving is never forgotten, whatever it has cut, so nobody
+   * loses a Score while they are earning it. Nor is a Mower that has earned an
+   * Achievement, while the Lawn stays under `KEY_KEEP`: a Score can be mown
+   * again in an afternoon and an Achievement cannot be earned twice, so the
+   * two are not worth the same and must not be pruned the same.
+   *
+   * Past `KEY_KEEP` that exemption ends, because every Score is written into
+   * one storage value and one storage value has a ceiling. A Lawn with more
+   * decorated Mowers than that forgets the quietest of them, and the Mower it
+   * forgets gets a fresh Mower Key on its next visit. That is the hole this
+   * leaves open, and it opens only on a Lawn that has been busy for a long
+   * time; raise `KEY_KEEP` — and split the storage value — before it does.
    */
   private prune(): void {
     if (this.scores.size <= SCORE_KEEP) return;
@@ -744,10 +865,12 @@ export class Lawn extends DurableObject {
       const key = (ws.deserializeAttachment() as { key?: string } | null)?.key;
       if (key) driving.add(key);
     }
+    const decorated = this.scores.size > KEY_KEEP;
+    const keep = decorated ? KEY_KEEP : SCORE_KEEP;
     const spare = [...this.scores]
-      .filter(([key]) => !driving.has(key))
+      .filter(([key, held]) => !driving.has(key) && (decorated || !held.a))
       .sort((a, b) => a[1].c - b[1].c);
-    for (const [key] of spare.slice(0, this.scores.size - SCORE_KEEP)) {
+    for (const [key] of spare.slice(0, this.scores.size - keep)) {
       this.scores.delete(key);
     }
   }
@@ -756,6 +879,11 @@ export class Lawn extends DurableObject {
    * Cut every Tile the swath touches back to zero Blade Height, and answer
    * with the grass that came off. That number is the Score: the Lawn counts
    * the blades itself, so a Mower cannot name its own tally.
+   *
+   * It leaves the same grass split by Field in `cutByField`, which is what a
+   * Harvest is counted from. That costs the Mow Stroke nothing: it has to
+   * know which Tiles are grass to count them at all, and the table that says
+   * so names the Field in the same byte.
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
@@ -768,6 +896,7 @@ export class Lawn extends DurableObject {
     const dy = y1 - y0;
     const len2 = dx * dx + dy * dy;
 
+    this.cutByField.fill(0);
     let blades = 0;
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
@@ -778,12 +907,101 @@ export class Lawn extends DurableObject {
         const oy = py - t * dy;
         if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
           const i = y * LAWN_WIDTH + x;
-          if (onGrass(x + 0.5, y + 0.5)) blades += bladeHeight(this.mownAt[i], REGROW[i], now);
+          const field = FIELD_OF[i];
+          if (field !== NO_FIELD) {
+            const off = bladeHeight(this.mownAt[i], REGROW[i], now);
+            blades += off;
+            this.cutByField[field] += off;
+          }
           this.mownAt[i] = now;
         }
       }
     }
     return blades;
+  }
+
+  /**
+   * Add one Mow Stroke to what the Lawn holds for this Mower: the blades, the
+   * Harvest of each Field the swath touched, and the Tiles it drove.
+   *
+   * All three grow and none of them ever falls, which is what lets an
+   * Achievement be for ever. The record is the one the map holds, so it is
+   * changed in place and not rebuilt: a Score that is rebuilt is a Score that
+   * silently drops the fields a later version added.
+   */
+  private credit(
+    ws: WebSocket,
+    key: string,
+    name: string,
+    blades: number,
+    drove: number,
+  ): void {
+    const score = this.scores.get(key) ?? { n: name, c: 0 };
+    score.c += blades;
+    score.d = tidy((score.d ?? 0) + drove);
+    // The blades of each Field are put on the record even when nothing was
+    // cut, so that reading the record never has to build them: a Mower reports
+    // ten times a second, and a Tally built afresh each time is throwaway
+    // arrays ten times a second.
+    const byField = score.h ?? (score.h = emptyTally().h);
+    if (blades > 0) {
+      for (let field = 0; field < byField.length; field++) {
+        const off = this.cutByField[field];
+        if (off > 0) byField[field] = tidy(byField[field] + off, 2);
+      }
+    }
+    this.scores.set(key, score);
+    this.award(ws, score);
+  }
+
+  /**
+   * Work out which Achievements a Score has earned, and tell that Mower when
+   * the answer has grown.
+   *
+   * What it holds is ORed with what it has earned and never replaced. An
+   * Achievement is a thing that happened, so a threshold that is raised
+   * afterwards must not take one back from the Mower that had it.
+   */
+  private award(ws: WebSocket, score: Score): void {
+    const before = score.a ?? 0;
+    const after = (before | earnedMask(tallyOf(score))) >>> 0;
+    if (after === before) return;
+    score.a = after;
+    try {
+      ws.send(JSON.stringify({ t: "got", a: after }));
+    } catch {
+      /* socket is going away; the Achievement is kept and arrives next visit */
+    }
+  }
+
+  /**
+   * Whether the Lawn itself saw the Bump a Mower says it was in.
+   *
+   * A Mower speaks only for itself about a daze, and that is right: it cannot
+   * daze anybody else with it. But a tally is worth forging, and two tabs
+   * parked against each other could trade Bumps all afternoon. So the Lawn
+   * asks its own question — is another Mower near, and were the two of them
+   * really closing? — from the positions and speeds it already keeps for the
+   * ball. A Mower alone in a corner, and two that stand still together, both
+   * answer no.
+   *
+   * The Closing Speed is the speed along the line between the two, so it is
+   * the same number whichever of them asks: the Mower that drove in and the
+   * Mower that was standing are both in the Bump, and both are counted.
+   */
+  private sawBump(ws: WebSocket): boolean {
+    const me = this.ballMowers.get(ws);
+    const now = Date.now();
+    if (!me || now - me.at > BUMP_STALE_MS) return false;
+    for (const [other, them] of this.ballMowers) {
+      if (other === ws || now - them.at > BUMP_STALE_MS) continue;
+      const dx = them.x - me.x;
+      const dy = them.y - me.y;
+      const gap = Math.hypot(dx, dy);
+      if (gap === 0 || gap > BUMP_REACH) continue;
+if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) return true;
+    }
+    return false;
   }
 
   /**
@@ -836,7 +1054,13 @@ export class Lawn extends DurableObject {
     const name = held?.n ?? mowerId();
     ws.serializeAttachment({ id, key, name });
     try {
-      ws.send(JSON.stringify({ t: "you", id, key, nm: name, s: Math.round(held?.c ?? 0) }));
+      // The Achievements come back with the Key, because they are the whole
+      // of what a returning Mower has to show for its last visit. They are
+      // what it already had, so the client lands them rather than announcing
+      // them, the way the Score is landed rather than rolled up to.
+      ws.send(JSON.stringify({
+        t: "you", id, key, nm: name, s: Math.round(held?.c ?? 0), a: held?.a ?? 0,
+      }));
     } catch {
       /* socket is going away */
     }

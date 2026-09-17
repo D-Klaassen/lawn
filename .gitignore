@@ -9,3 +9,6 @@ public/score.js
 
 # Shared ball physics, built before dev and deploy.
 public/ball.js
+
+# Shared Achievement table, built before dev and deploy.
+public/achievements.js
