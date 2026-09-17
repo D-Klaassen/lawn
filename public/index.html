@@ -260,6 +260,36 @@
   }
   #board-list li.mine { background: rgba(229, 255, 151, .14); color: #f1ffd7; font-weight: 700; }
   #board-list li span:last-child { color: #e8cd80; }
+  /* How many Achievements a Mower holds, in a star at the front of its name.
+     The star keeps its place when it is empty, so the names stand in one
+     column whatever anybody has earned. */
+  #board-list li { align-items: center; }
+  #board-list li .board-name { flex: 1; min-width: 0; }
+  .board-star {
+    flex: 0 0 27px; height: 27px; position: relative; isolation: isolate;
+    /* The number sits a little above the middle, because that is where a
+       five-pointed star has its width. Centred on the box it straddles the
+       notch between the two bottom legs and reads as broken. */
+    display: grid; place-items: center; padding-bottom: 4px;
+    font: 900 13px/1 ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums; letter-spacing: -.04em;
+    color: #1a2708; text-shadow: none;
+  }
+  /* Two digits need more room than the waist of a star gives at this size. */
+  .board-star.wide { font-size: 11px; letter-spacing: -.08em; }
+  .board-star::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    /* Pale in the middle, gold at the points: the number stands on the light
+       part, which is the only way a dark digit reads at this size. */
+    background: radial-gradient(circle at 50% 42%, #fff8e0 0%, #ffe9a8 38%, #eec055 70%, #d29b2c 100%);
+    /* A chunky star, not a spiky one: the inner points stand at 55% of the
+       outer radius instead of the usual 38%, which is what gives the middle
+       enough width to carry a number. */
+    clip-path: polygon(50% 0%, 66.2% 27.8%, 97.6% 34.6%, 76.2% 58.5%, 79.4% 90.5%, 50% 77.5%, 20.6% 90.5%, 23.8% 58.5%, 2.4% 34.6%, 33.8% 27.8%);
+    filter: drop-shadow(0 1px 2px rgba(11, 18, 8, .55));
+  }
+  /* Nothing earned yet: the slot stays, the star goes. */
+  .board-star.empty::before { display: none; }
   /* Achievements. The panel is the board's twin — the same card in the middle
      of the screen, held open rather than switched on — because the two answer
      the same kind of question and a Mower should not learn two panels. */
@@ -437,6 +467,8 @@
     body:has(#field-banner.visible) #world-quests { visibility: hidden; }
     #board { min-width: min(320px, 88vw); padding: 16px 16px 18px; }
     #board-list li { font-size: 13px; gap: 14px; }
+    .board-star { flex-basis: 25px; height: 25px; font-size: 12px; padding-bottom: 3px; }
+    .board-star.wide { font-size: 10px; }
     #awards { width: min(340px, 90vw); padding: 14px 14px 16px; }
     #awards-list { max-height: 52dvh; }
     .award { padding: 6px; gap: 8px; }
@@ -527,7 +559,7 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
-import { ACHIEVEMENTS, holds } from '/achievements.js';
+import { ACHIEVEMENTS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
  * reward belongs on the Lawn: the parcel itself lights up, and the Mower
@@ -1026,6 +1058,9 @@ function connect() {
       p.name = nameOf(seed);
       p.hue = hueOf(seed);
       p.score = Number.isFinite(m.s) ? m.s : 0;
+      // A tab open across the deploy that added this sends no count, and its
+      // Mower simply wears an empty star until it reloads.
+      p.awards = Number.isFinite(m.ac) && m.ac > 0 ? m.ac : 0;
       p.seen = performance.now();
       // Keep the report on the shared clock, the same one the Tiles use.
       const at = Number.isFinite(m.n) ? m.n : Date.now() + clockOffset;
@@ -1186,18 +1221,37 @@ function refreshBoard() {
   const now = performance.now();
   const rows = [];
   for (const [id, p] of peers) {
-    if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: p.name ?? nameOf(id), score: p.score ?? 0, mine: false });
+    if (now - p.seen <= PEER_TIMEOUT) {
+      rows.push({ name: p.name ?? nameOf(id), score: p.score ?? 0, awards: p.awards ?? 0, mine: false });
+    }
   }
-  rows.push({ name: myName ? nameOf(myName) : "You", score: Math.round(bladesCut), mine: true });
+  // Your own star is counted here and not waited for: the Lawn tells you what
+  // you hold the moment it awards it, and the board should not be the one
+  // place on the screen that lags behind that.
+  rows.push({
+    name: myName ? nameOf(myName) : "You",
+    score: Math.round(bladesCut),
+    awards: countHeld(awardMask),
+    mine: true,
+  });
   rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   boardList.replaceChildren(...rows.map((r) => {
     const li = document.createElement("li");
     if (r.mine) li.className = "mine";
+    const star = document.createElement("span");
+    star.className = r.awards > 9 ? "board-star wide" : r.awards > 0 ? "board-star" : "board-star empty";
+    if (r.awards > 0) {
+      star.textContent = String(r.awards);
+      star.setAttribute("aria-label", `${r.awards} achievement${r.awards === 1 ? "" : "s"}`);
+    } else {
+      star.setAttribute("aria-hidden", "true");
+    }
     const name = document.createElement("span");
+    name.className = "board-name";
     name.textContent = r.name;
     const score = document.createElement("span");
     score.textContent = r.score.toLocaleString();
-    li.append(name, score);
+    li.append(star, name, score);
     return li;
   }));
 }

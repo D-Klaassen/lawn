@@ -34,8 +34,11 @@ export const FIELD_NAMES = [
 export interface Tally {
   /** Blades cut, over every visit. It is the Score. */
   c: number;
-  /** Harvests of each Field, in the order of `FIELD_NAMES`. */
-  h: number[];
+  /**
+   * How often this Mower stood in each Field as that Field was finished, in
+   * the order of `FIELD_NAMES`.
+   */
+  q: number[];
   /** Tiles driven, as the Lawn drove the Mower and not as it claimed. */
   d: number;
   /** Bumps the Lawn saw for itself. */
@@ -45,35 +48,16 @@ export interface Tally {
 /**
  * The last part in a hundred of a Field, which may stand and the Field still
  * count as cut. A copy of `FIELD_SLACK` in `public/fields.js`, which the World
- * Quest Tracker already measures against; `scripts/check-achievements.mjs`
- * proves the two are the same.
+ * Quest Tracker measures against and the Lawn now measures against too;
+ * `scripts/check-achievements.mjs` proves the two are the same.
  */
 export const FIELD_SLACK = 0.01;
 
 /**
- * One Harvest: a whole Field's worth of Blade Height, taken off that Field by
- * one Mower, less the Slack.
- *
- * It is not the same thing as the Field reading 100% on the World Quest
- * Tracker. The Tracker says how the Field stands, which is everybody's work
- * together; a Harvest says what one Mower took off it, which is nobody else's.
- * A Field is about eleven thousand Tiles, so one Harvest is some three minutes
- * of unbroken mowing on standing grass — and because the Lawn holds the
- * fraction and not a flag, the Harvest of a Mower that cuts half a Field today
- * and half of it next week still comes to one.
- *
- * The Slack is here for the reason it is on the Tracker, and for a second
- * reason besides. A Mow Stroke is a capsule and a Field boundary is a curve,
- * so the edge of a Field cannot be cut clean: a Mower that drives the whole
- * parcel in rows four Tiles apart takes 99.8% of it off and no more, measured.
- * Asking for the last blade would make the end of a Harvest what the end of a
- * quest used to be — searching, not mowing — and it would make the perfect
- * drive fall short, which is worse than searching.
+ * Times a Mower must be there as one Field is finished before that Field has
+ * plainly grown back and been cut again under its wheels.
  */
-export const HARVEST = 1 - FIELD_SLACK;
-
-/** Harvests from one Field that say the Mower came back after the Regrowth. */
-export const THRICE = 3 * HARVEST;
+export const THRICE = 3;
 
 /** Blades cut, for each step of the ladder. */
 export const BLADE_STEPS = [1000, 20000, 200000, 1000000];
@@ -107,20 +91,20 @@ export const ACHIEVEMENTS: Achievement[] = [
   ...FIELD_NAMES.map((name, field) => ({
     bit: field,
     name,
-    blurb: `One Harvest: a whole Field's worth of grass off ${name}.`,
-    earned: (tally: Tally) => (tally.h[field] ?? 0) >= HARVEST,
+    blurb: `Stand in ${name} as the last of it is cut.`,
+    earned: (tally: Tally) => (tally.q[field] ?? 0) >= 1,
   })),
   {
     bit: 9,
     name: 'The Whole Lawn',
-    blurb: 'One Harvest from every one of the nine Fields.',
-    earned: (tally) => FIELD_NAMES.every((_, field) => (tally.h[field] ?? 0) >= HARVEST),
+    blurb: 'Be there for the finish of every one of the nine Fields.',
+    earned: (tally) => FIELD_NAMES.every((_, field) => (tally.q[field] ?? 0) >= 1),
   },
   {
     bit: 10,
     name: 'It Grew Back',
-    blurb: 'Three Harvests from one Field. The grass returns; so must you.',
-    earned: (tally) => tally.h.some((harvests) => harvests >= THRICE),
+    blurb: 'Be there for one Field finishing three times. The grass returns; so must you.',
+    earned: (tally) => tally.q.some((times) => times >= THRICE),
   },
   ...['First Cut', 'Grass Stains', 'Deep Green', 'The Long Season'].map((name, step) => ({
     bit: 11 + step,
@@ -144,7 +128,7 @@ export const ACHIEVEMENTS: Achievement[] = [
 
 /** A Mower that has done nothing yet. */
 export function emptyTally(): Tally {
-  return { c: 0, h: new Array(FIELD_NAMES.length).fill(0), d: 0, b: 0 };
+  return { c: 0, q: new Array(FIELD_NAMES.length).fill(0), d: 0, b: 0 };
 }
 
 /**
@@ -166,4 +150,19 @@ export function earnedMask(tally: Tally): number {
 /** Whether a mask holds one Achievement. */
 export function holds(mask: number, bit: number): boolean {
   return (mask & (1 << bit)) !== 0;
+}
+
+/**
+ * How many Achievements a mask holds.
+ *
+ * It counts the bits that belong to an Achievement and not the bits that are
+ * set, so a bit left standing by a retired Achievement adds nothing to
+ * anybody's tally.
+ */
+export function countHeld(mask: number): number {
+  let held = 0;
+  for (const achievement of ACHIEVEMENTS) {
+    if (holds(mask, achievement.bit)) held += 1;
+  }
+  return held;
 }
