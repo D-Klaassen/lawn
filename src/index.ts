@@ -1,3 +1,4 @@
+import { treeAt, treeEarthAt } from "./trees";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -155,12 +156,13 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
     wet = Math.max(wet, water(shore, along - BRIDGE));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  return { field: edge <= lane || wet > -BANK ? -1 : first, wet };
+  return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
 }
 
-/** Open water. No Mower drives here, whatever its client says. */
-function inWater(x: number, y: number): boolean {
-  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > 0;
+/** Water and trunks stop reported strokes, whatever the client says. */
+function blocked(x: number, y: number): boolean {
+  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > 0
+    || treeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT);
 }
 
 /**
@@ -1284,11 +1286,11 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
    */
   private dryRun(from: Place, ux: number, uy: number, distance: number): number {
     for (let travelled = WATER_STEP; travelled < distance; travelled += WATER_STEP) {
-      if (inWater(from.x + ux * travelled, from.y + uy * travelled)) {
+      if (blocked(from.x + ux * travelled, from.y + uy * travelled)) {
         return Math.max(0, travelled - WATER_STEP);
       }
     }
-    return inWater(from.x + ux * distance, from.y + uy * distance)
+    return blocked(from.x + ux * distance, from.y + uy * distance)
       ? Math.max(0, Math.floor(distance / WATER_STEP) * WATER_STEP - WATER_STEP)
       : distance;
   }
