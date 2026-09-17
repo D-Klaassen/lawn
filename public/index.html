@@ -413,6 +413,7 @@
   #emote-row .touch-btn:nth-child(2) { animation-delay: .04s; }
   #emote-row .touch-btn:nth-child(3) { animation-delay: .08s; }
   #emote-row .touch-btn:nth-child(4) { animation-delay: .12s; }
+  #emote-row .touch-btn:nth-child(5) { animation-delay: .16s; }
   @keyframes emote-pop { from { transform: scale(.2); opacity: 0; } }
   body.touch #board, body.touch #awards { pointer-events: auto; }
   #awards-list { pointer-events: auto; }
@@ -445,6 +446,14 @@
        clears the map and the stick instead. */
     #award-toast { bottom: calc(var(--quest-floor) + 6px); width: min(88vw, 400px); }
     #award-toast-name { font-size: 19px; }
+  }
+  @media (max-width: 420px) {
+    /* The open row is five glyphs and the button they came out of, and it
+       grows from the right edge of the screen. On a phone that narrow the
+       buttons give up a few pixels rather than run off the left edge; they
+       keep the 44px a thumb needs. */
+    #emote-row { gap: 5px; }
+    #emote-row .touch-btn { width: 44px; height: 44px; font-size: 23px; }
   }
   @media (max-height: 560px) and (max-width: 1000px) {
     #stick-zone { height: min(64dvh, 260px); }
@@ -1106,7 +1115,7 @@ connect();
  * under the finger next to it. A thumb on the space bar is a hand that has
  * left the wheel.
  */
-const EMOTES = ["\u{1F44B}", "\u{1F44D}", "\u{1F604}", "\u{2764}\u{FE0F}"];
+const EMOTES = ["\u{1F44B}", "\u{1F44D}", "\u{1F604}", "\u{2764}\u{FE0F}", "\u{1F480}"];
 const EMOTE_MS = 2600;
 let pickerOpen = false, pickerPick = 0, pickerAt = 0;
 let myEmote = -1, myEmoteAt = 0;
@@ -3200,8 +3209,8 @@ function drawEmotes(cw, ch, dpr) {
     if (anchor) {
       const open = now - pickerAt;
       const n = EMOTES.length;
-      // A narrow window gets a narrower fan: four cards must never run off it.
-      const fit = Math.min(1, innerWidth / 560);
+      // A narrow window gets a narrower fan: five cards must never run off it.
+      const fit = Math.min(1, innerWidth / 700);
       const card = PICKER_SIZE * dpr * fit;
       const step = card * 1.18;
       const left = anchor[0] - (n - 1) / 2 * step;

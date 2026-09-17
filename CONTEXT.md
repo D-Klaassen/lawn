@@ -332,6 +332,16 @@ hand that has left the wheel. Space is nobody's key now, so it goes back to
 the buttons on the page: a visitor who tabs to one and presses it has it
 press.
 
+There are five: a wave, a thumb, a smile, a heart and a skull. The first four
+say a friendly thing, and a Lawn where every answer is friendly has no answer
+for a Mower that has just driven you into a Ditch. The skull is that answer,
+and it is the mildest one the Lawn will ever hand out.
+
+The pictures live on the client, and the Lawn knows only how many there are:
+`EMOTES` in `public/index.html` holds the glyphs and `EMOTE_COUNT` in
+`src/index.ts` is the number the Lawn will relay. A sixth Emote is two edits,
+and one of them without the other is an Emote nobody else can see.
+
 A card in the air, and a card too small is a card nobody reads at
 the far side of a field. The card is therefore wide, and two things keep it
 clear of the Mower that sent it.
