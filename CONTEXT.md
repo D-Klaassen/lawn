@@ -14,6 +14,9 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Field** — one parcel of the Lawn, and one quest. There are nine. A Field
   is the ground that lies nearer its own seed than any other seed, so no
   Field is a box and no two are the same shape.
+- **Slack** — the last part in a hundred of a Field, which may stand and the
+  Field still count as cut. It is what turns the end of a quest back into
+  mowing.
 - **Lane** — the bare seam between two Fields. Nothing grows on it and every
   Mower drives over it.
 - **Ditch** — a seam that carries water instead of a lane. A Mower cannot
@@ -90,6 +93,23 @@ copy must stay identical.
 `node scripts/check-map.mjs` reads the map the way a Mower does and says
 whether it holds together: how much of the Lawn is grass, lane and water, and
 whether every Tile of every Field can still be cut.
+
+## The end of a quest is mowing, not searching
+
+A Field is ten thousand Tiles. Asking for every one of them made the last
+minute of a quest a different game: the grass was plainly cut, the tracker
+said 99%, and the Mower drove the parcel again looking for one tuft it could
+not see from the seat.
+
+So a Field counts as cut with one part in a hundred still standing. That is
+about a hundred Tiles — a patch some ten Tiles across, which is a thing a
+Mower can miss without being careless, and not a thing it can leave half the
+Field standing behind.
+
+The number on the screen is measured against that goal, not against the last
+blade. The bar therefore fills exactly as the quest completes, and it never
+reads 97% and then jumps: 97% really is 3% standing. Slack is what the
+progress is measured against; it is never taken off the end of it.
 
 ## The water says no, and the Lawn says it too
 

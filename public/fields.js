@@ -157,6 +157,22 @@ export function buildFields(width, height) {
   return fields;
 }
 
+/**
+ * How much of a Field may stand and the Field still count as cut: one part in
+ * a hundred. Without it the end of a quest is not mowing, it is searching —
+ * one tuft in ten thousand Tiles, somewhere in a parcel the size of a screen,
+ * and the Mower that plainly cut the Field has to comb it to be told so.
+ */
+export const FIELD_SLACK = 0.01;
+
+/**
+ * How far through a Field a Mower is, from 0 to 100.
+ *
+ * It measures against the goal and not against the last blade, so the bar
+ * fills exactly as the quest completes. A Field that reads 97% still has 3%
+ * standing and is not finished: the Slack is what the number is measured
+ * against, not a number taken off the end of it.
+ */
 export function fieldProgress(tiles, heightAt) {
   if (!tiles.length) return 0;
   let remaining = 0;
@@ -164,7 +180,8 @@ export function fieldProgress(tiles, heightAt) {
     // Short stubble counts as cut, so slow regrowth doesn't prevent completion.
     remaining += Math.max(0, Math.min(1, (heightAt(i) - 0.1) / 0.9));
   }
-  return 100 * (1 - remaining / tiles.length);
+  const cut = 1 - remaining / tiles.length;
+  return 100 * Math.min(1, cut / (1 - FIELD_SLACK));
 }
 
 /**
