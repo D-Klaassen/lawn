@@ -777,7 +777,7 @@ export class Lawn extends DurableObject {
       JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, s, ac, n: Date.now() }),
       ws,
     );
-    this.tell(ws, s);
+    this.tell(ws, held);
   }
 
   private ballMessage(): string {
@@ -1004,7 +1004,7 @@ export class Lawn extends DurableObject {
     if (after === before) return;
     score.a = after;
     try {
-      ws.send(JSON.stringify({ t: "got", a: after }));
+      ws.send(JSON.stringify({ t: "got", a: after, ...this.tallyMessage(score) }));
     } catch {
       /* socket is going away; the Achievement is kept and arrives next visit */
     }
@@ -1113,19 +1113,35 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
   }
 
   /**
-   * Tell a Mower what it has really cut. The client counts along so the digits
-   * roll without waiting for the Lawn, and this puts that guess right a few
-   * times a second — the same bargain the Snapshot makes for the Tiles.
+   * Tell a Mower what it has really cut, and what else it has done.
+   *
+   * The client counts the blades along so the digits roll without waiting for
+   * the Lawn, and this puts that guess right a few times a second — the same
+   * bargain the Snapshot makes for the Tiles. The rest of the tally rides with
+   * it because the Achievements window draws how far along every ladder this
+   * Mower is, and it can only draw what it has been told. It goes to the one
+   * socket that asked and is never broadcast, so it costs the line nothing
+   * that matters.
    */
-  private tell(ws: WebSocket, score: number): void {
+  private tell(ws: WebSocket, held: Score | undefined): void {
     const now = Date.now();
     if (now - (this.scoredAt.get(ws) ?? 0) < SCORE_GAP_MS) return;
     this.scoredAt.set(ws, now);
     try {
-      ws.send(JSON.stringify({ t: "score", s: score }));
+      ws.send(JSON.stringify({ t: "score", ...this.tallyMessage(held) }));
     } catch {
       /* socket is going away */
     }
+  }
+
+  /** What a Mower has done, in the shape the Achievement table reads. */
+  private tallyMessage(held: Score | undefined) {
+    return {
+      s: Math.round(held?.c ?? 0),
+      d: Math.round(held?.d ?? 0),
+      b: held?.b ?? 0,
+      q: held?.q ?? emptyTally().q,
+    };
   }
 
   private resync(ws: WebSocket): void {
@@ -1167,7 +1183,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
       // what it already had, so the client lands them rather than announcing
       // them, the way the Score is landed rather than rolled up to.
       ws.send(JSON.stringify({
-        t: "you", id, key, nm: name, s: Math.round(held?.c ?? 0), a: held?.a ?? 0,
+        t: "you", id, key, nm: name, a: held?.a ?? 0, ...this.tallyMessage(held),
       }));
     } catch {
       /* socket is going away */
