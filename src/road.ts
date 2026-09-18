@@ -27,6 +27,9 @@ export function roadAt(x: number, y: number, width: number, height: number): num
 
 export const ROAD_WGSL = `
 const ROAD_HALF_WIDTH = ${ROAD_HALF_WIDTH.toFixed(1)};
+fn roadCentre(x : f32) -> f32 {
+  return C.misc2.y * (0.5 + 0.04 * sin(x / C.misc2.x * 6.28318530718 + 0.3));
+}
 fn roadDistance(p : vec2f) -> f32 {
   let t = p.x / C.misc2.x * 6.28318530718;
   let centre = C.misc2.y * (0.5 + 0.04 * sin(t + 0.3));
