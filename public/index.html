@@ -1605,7 +1605,7 @@ let awardMask = 0, awardsOpen = false, awardsAt = 0;
  * What the Lawn says this Mower has done. The window draws how far along each
  * ladder it is, and a bar it has not been told about cannot be drawn.
  */
-let myTally = { c: 0, q: new Array(9).fill(0), d: 0, b: 0 };
+let myTally = { c: 0, q: new Array(9).fill(0), d: 0, b: 0, g: 0 };
 /** Achievements waiting for their turn on the card. Two can land at once. */
 const awardQueue = [];
 let awardTimer;
@@ -1615,6 +1615,7 @@ function landTally(m) {
   if (Number.isFinite(m.s) && m.s >= 0) myTally.c = m.s;
   if (Number.isFinite(m.d) && m.d >= 0) myTally.d = m.d;
   if (Number.isFinite(m.b) && m.b >= 0) myTally.b = m.b;
+  if (Number.isFinite(m.g) && m.g >= 0) myTally.g = m.g;
   if (Array.isArray(m.q)) myTally.q = m.q.map((n) => (Number.isFinite(n) && n > 0 ? n : 0));
 }
 

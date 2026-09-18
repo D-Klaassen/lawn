@@ -11,7 +11,7 @@
  *
  *     node scripts/check-achievements.mjs
  */
-import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, TIERS, earned, earnedMask, emptyTally, holds } from '../public/achievements.js';
+import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIFT_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, TIERS, earned, earnedMask, emptyTally, holds } from '../public/achievements.js';
 import { FIELD_NAMES as MAP_NAMES, FIELD_SLACK as MAP_SLACK } from '../public/fields.js';
 
 const problems = [];
@@ -53,6 +53,7 @@ const everything = {
   q: FIELD_NAMES.map(() => THRICE),
   d: Math.max(...DRIVE_STEPS),
   b: Math.max(...BUMP_STEPS),
+  g: Math.max(...DRIFT_STEPS),
 };
 const all = earnedMask(everything);
 for (const achievement of ACHIEVEMENTS) {
@@ -61,7 +62,7 @@ for (const achievement of ACHIEVEMENTS) {
 
 // Every ladder climbs. A step that is not above the one below it is a step
 // two Achievements land on at once, which reads as a bug on the screen.
-for (const [what, steps] of [['blades', BLADE_STEPS], ['tiles driven', DRIVE_STEPS], ['bumps', BUMP_STEPS]]) {
+for (const [what, steps] of [['blades', BLADE_STEPS], ['tiles driven', DRIVE_STEPS], ['bumps', BUMP_STEPS], ['blades cut while drifting', DRIFT_STEPS]]) {
   for (let i = 1; i < steps.length; i++) {
     if (!(steps[i] > steps[i - 1])) problems.push(`the ${what} ladder does not climb at step ${i}: ${steps[i - 1]} then ${steps[i]}`);
   }

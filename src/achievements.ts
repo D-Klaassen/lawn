@@ -43,6 +43,8 @@ export interface Tally {
   d: number;
   /** Bumps the Lawn saw for itself. */
   b: number;
+  /** Blades cut while a Mow Stroke carried a drift, on the Mower's own word. */
+  g: number;
 }
 
 /**
@@ -69,6 +71,13 @@ export const DRIVE_STEPS = [1000, 10000, 100000, 500000];
  * nothing but ramming.
  */
 export const BUMP_STEPS = [5, 40, 200];
+/**
+ * Blades cut while drifting, for each step of the ladder. Held to the Mower's
+ * own word: the Lawn sees the blades come off, but a drift is a thing the
+ * tyres do, not the grass, so nothing here checks it independently the way a
+ * Bump is checked.
+ */
+export const DRIFT_STEPS = [200, 4000, 40000, 200000];
 
 /**
  * Which ladder an Achievement stands in.
@@ -78,10 +87,10 @@ export const BUMP_STEPS = [5, 40, 200];
  * its nine are not a ladder but a set, climbed in any order, so they are shown
  * as the ticked list inside `lawn` rather than as nine rows of their own.
  */
-export type Tier = 'field' | 'lawn' | 'again' | 'blades' | 'tiles' | 'bumps';
+export type Tier = 'field' | 'lawn' | 'again' | 'blades' | 'tiles' | 'bumps' | 'drift';
 
 /** The ladders the window draws, in the order it draws them. */
-export const TIERS: Tier[] = ['lawn', 'again', 'blades', 'tiles', 'bumps'];
+export const TIERS: Tier[] = ['lawn', 'again', 'blades', 'tiles', 'bumps', 'drift'];
 
 export interface Achievement {
   /** Which bit of the mask this one holds. It must never be reassigned. */
@@ -161,6 +170,14 @@ export const ACHIEVEMENTS: Achievement[] = [
     have: (tally: Tally) => tally.b,
     goal: BUMP_STEPS[step],
   })),
+  ...['Loose Surface', 'Countersteer', 'Opposite Lock', 'Full Send'].map((name, step) => ({
+    bit: 22 + step,
+    name,
+    blurb: `Cut ${DRIFT_STEPS[step].toLocaleString('en-GB')} blades while drifting.`,
+    tier: 'drift' as Tier,
+    have: (tally: Tally) => tally.g,
+    goal: DRIFT_STEPS[step],
+  })),
 ];
 
 /** Whether a Tally has earned one Achievement. */
@@ -170,7 +187,7 @@ export function earned(achievement: Achievement, tally: Tally): boolean {
 
 /** A Mower that has done nothing yet. */
 export function emptyTally(): Tally {
-  return { c: 0, q: new Array(FIELD_NAMES.length).fill(0), d: 0, b: 0 };
+  return { c: 0, q: new Array(FIELD_NAMES.length).fill(0), d: 0, b: 0, g: 0 };
 }
 
 /**
