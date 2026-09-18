@@ -3974,7 +3974,20 @@ function fieldCentres() {
     if (id < 0) continue;
     sums[id][0] += x + 0.5; sums[id][1] += y + 0.5; sums[id][2]++;
   }
-  fieldMarks = sums.map(([x, y, n], i) => ({ name: FIELD_NAMES[i], x: x / n, y: y / n }));
+  fieldMarks = sums.map(([x, y, n], i) => {
+    const centre = { x: x / n, y: y / n };
+    // The arithmetic centre can sit on a narrow verge. Walk to the nearest
+    // owned grass tile so a label is always inside its parcel.
+    for (let radius = 0; radius < 40; radius += 2) {
+      for (let step = 0; step < 16; step++) {
+        const angle = step * Math.PI / 8;
+        const px = centre.x + Math.cos(angle) * radius;
+        const py = centre.y + Math.sin(angle) * radius;
+        if (fieldAt(px, py, W, H) === i && roadAt(px, py, W, H) === 0) return { name: FIELD_NAMES[i], x: px, y: py };
+      }
+    }
+    return { name: FIELD_NAMES[i], x: centre.x, y: centre.y };
+  });
   fieldMarksFor = size;
   return fieldMarks;
 }
