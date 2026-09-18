@@ -1,5 +1,5 @@
 import { treeAt, treeEarthAt, EARTH_RADIUS, TREES } from './trees.js';
-import { roadDistance, ROAD_HALF_WIDTH, ROAD_WGSL } from './road.js';
+import { roadDistance, roadCentre, ROAD_HALF_WIDTH, ROAD_WGSL } from './road.js';
 
 /**
  * The map of the Lawn.
@@ -30,9 +30,8 @@ export const FIELD_NAMES = [
  * grows with the Lawn instead of being pinned to one size.
  */
 export const SEEDS = [
-  [0.23, 0.25], [0.50, 0.23], [0.77, 0.25],
-  [0.22, 0.50], [0.50, 0.50], [0.78, 0.50],
-  [0.23, 0.75], [0.50, 0.77], [0.77, 0.75],
+  [0.20, 0.31], [0.40, 0.30], [0.60, 0.29], [0.80, 0.30],
+  [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
 
 /** Half the width of a lane, in Tiles. Nothing grows on it. */
@@ -48,7 +47,7 @@ export const BRIDGE = 6;
  * The seams that carry water. Four of them: enough that a Mower has to read
  * the map and drive round, and little enough that the Lawn is still a lawn.
  */
-export const DITCHES = [[1, 4], [3, 4], [5, 8], [6, 7]];
+export const DITCHES = [[0, 1], [1, 2], [2, 3], [4, 5], [5, 6], [6, 7], [7, 8]];
 
 const SHORE_RADIUS = 1.2;
 
@@ -73,9 +72,11 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
 export function placeAt(x, y, width, height) {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
+  const north = y < roadCentre(x, width, height);
   let first = 0, d0 = Infinity, d1 = Infinity;
   const distances = [];
   for (let k = 0; k < SEEDS.length; k++) {
+    if ((k < 4) !== north) { distances.push(Infinity); continue; }
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
@@ -91,6 +92,7 @@ export function placeAt(x, y, width, height) {
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
+    if ((a < 4) !== north) continue;
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
@@ -290,11 +292,13 @@ fn waterDepth(into : f32, beyond : f32) -> f32 {
 fn placeAt(p : vec2f) -> vec3f {
   var seeds = array<vec2f, SEED_COUNT>(${SEEDS.map(([u, v]) => `vec2f(${u.toFixed(4)}, ${v.toFixed(4)})`).join(', ')});
   let q = warpPoint(p);
+  let north = p.y < roadCentre(p.x);
   var distances : array<f32, SEED_COUNT>;
   var first = 0;
   var d0 = 1e20;
   var d1 = 1e20;
   for (var k = 0; k < SEED_COUNT; k = k + 1) {
+    if ((k < 4) != north) { distances[k] = 1e20; continue; }
     let d = length(q - seeds[k] * C.misc2.xy);
     distances[k] = d;
     if (d < d0) { d1 = d0; d0 = d; first = k; }
@@ -307,6 +311,7 @@ fn placeAt(p : vec2f) -> vec3f {
   for (var i = 0; i < ${DITCHES.length}; i = i + 1) {
     let a = ditches[i].x;
     let b = ditches[i].y;
+    if ((a < 4) != north) { continue; }
     let across = abs(distances[a] - distances[b]) * 0.5;
     var third = 1e20;
     for (var k = 0; k < SEED_COUNT; k = k + 1) {

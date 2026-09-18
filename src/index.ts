@@ -1,5 +1,5 @@
 import { treeAt, treeEarthAt } from "./trees";
-import { roadDistance, ROAD_HALF_WIDTH } from "./road";
+import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
@@ -96,15 +96,14 @@ function regrowTable(width: number, height: number): Float32Array {
  * on which Tiles are grass, or a score counts blades that were never there.
  */
 const SEEDS: [number, number][] = [
-  [0.23, 0.25], [0.50, 0.23], [0.77, 0.25],
-  [0.22, 0.50], [0.50, 0.50], [0.78, 0.50],
-  [0.23, 0.75], [0.50, 0.77], [0.77, 0.75],
+  [0.20, 0.31], [0.40, 0.30], [0.60, 0.29], [0.80, 0.30],
+  [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
 const LANE = 2.3;
 const DITCH = 2.6;
 const BANK = 1.6;
 const BRIDGE = 6;
-const DITCHES = [[1, 4], [3, 4], [5, 8], [6, 7]];
+const DITCHES = [[0, 1], [1, 2], [2, 3], [4, 5], [5, 6], [6, 7], [7, 8]];
 const SHORE_RADIUS = 1.2;
 
 function warpX(x: number, y: number): number {
@@ -140,9 +139,11 @@ function water(into: number, beyond: number): number {
 function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
+  const north = y < roadCentre(x, width, height);
   let first = 0, d0 = Infinity, d1 = Infinity;
   const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
+    if ((k < 4) !== north) { distances.push(Infinity); continue; }
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
@@ -155,6 +156,7 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
+    if ((a < 4) !== north) continue;
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
