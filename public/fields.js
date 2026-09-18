@@ -1,4 +1,5 @@
 import { treeAt, treeEarthAt, EARTH_RADIUS, TREES } from './trees.js';
+import { roadDistance, ROAD_HALF_WIDTH, ROAD_WGSL } from './road.js';
 
 /**
  * The map of the Lawn.
@@ -29,9 +30,9 @@ export const FIELD_NAMES = [
  * grows with the Lawn instead of being pinned to one size.
  */
 export const SEEDS = [
-  [0.15, 0.19], [0.47, 0.13], [0.83, 0.20],
-  [0.13, 0.53], [0.44, 0.46], [0.79, 0.51],
-  [0.19, 0.85], [0.52, 0.81], [0.86, 0.84],
+  [0.23, 0.25], [0.50, 0.23], [0.77, 0.25],
+  [0.22, 0.50], [0.50, 0.50], [0.78, 0.50],
+  [0.23, 0.75], [0.50, 0.77], [0.77, 0.75],
 ];
 
 /** Half the width of a lane, in Tiles. Nothing grows on it. */
@@ -105,7 +106,9 @@ export function placeAt(x, y, width, height) {
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
+  const road = roadDistance(x, y, width, height) - ROAD_HALF_WIDTH;
+  wet = Math.min(wet, road);
+  return { field: road <= 0 || edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
 }
 
 /**
@@ -238,6 +241,7 @@ export function buildMapImage(width, height, done = [], scale = 2) {
       const { field, wet } = placeAt(wx, wy, width, height);
       let c;
       if (wet > 0) c = wet > 1.2 ? [52, 96, 128] : [78, 126, 152];
+      else if (roadDistance(wx, wy, width, height) < ROAD_HALF_WIDTH) c = [195, 171, 126];
       else if (field < 0) c = wet > -BANK ? [122, 104, 72] : [163, 138, 96];
       else c = greens[field];
       const i = (y * canvas.width + x) * 4;
@@ -256,6 +260,7 @@ export function buildMapImage(width, height, done = [], scale = 2) {
  * Mower stops.
  */
 export const MAP_WGSL = `
+${ROAD_WGSL}
 const LANE = ${LANE.toFixed(3)};
 const DITCH = ${DITCH.toFixed(3)};
 const BANK = ${BANK.toFixed(3)};
@@ -314,6 +319,7 @@ fn placeAt(p : vec2f) -> vec3f {
     let along = sqrt(max(0.0, dot(offset, offset) - across * across));
     wet = max(wet, waterDepth(shore, along - BRIDGE + wander));
   }
+  wet = min(wet, roadDistance(p) - ROAD_HALF_WIDTH);
   return vec3f(edge, wet, f32(first));
 }
 
@@ -336,7 +342,8 @@ fn pathGrass(p : vec2f) -> f32 {
       + 0.18 * sin(angle * 5.0 - seed * 2.0) + 0.09 * sin(angle * 9.0 + seed)) * tree.z;
     earth = min(earth, smoothstep(edge, edge + 0.45, length(delta)));
   }
-  return min(min(lane, bank), earth);
+  let road = smoothstep(ROAD_HALF_WIDTH, ROAD_HALF_WIDTH + 1.8, roadDistance(p) + fringe);
+  return min(min(min(lane, bank), earth), road);
 }
 
 /** How far a point lies inside the water, in Tiles. Negative on dry ground. */

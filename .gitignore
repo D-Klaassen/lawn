@@ -15,3 +15,5 @@ public/achievements.js
 
 # Shared tree landmarks, built before dev and deploy.
 public/trees.js
+public/road.js
+public/driving.js

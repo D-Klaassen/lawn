@@ -1,4 +1,6 @@
 import { treeAt, treeEarthAt } from "./trees";
+import { roadDistance, ROAD_HALF_WIDTH } from "./road";
+import { MAX_SPEED } from "./driving";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -94,9 +96,9 @@ function regrowTable(width: number, height: number): Float32Array {
  * on which Tiles are grass, or a score counts blades that were never there.
  */
 const SEEDS: [number, number][] = [
-  [0.15, 0.19], [0.47, 0.13], [0.83, 0.20],
-  [0.13, 0.53], [0.44, 0.46], [0.79, 0.51],
-  [0.19, 0.85], [0.52, 0.81], [0.86, 0.84],
+  [0.23, 0.25], [0.50, 0.23], [0.77, 0.25],
+  [0.22, 0.50], [0.50, 0.50], [0.78, 0.50],
+  [0.23, 0.75], [0.50, 0.77], [0.77, 0.75],
 ];
 const LANE = 2.3;
 const DITCH = 2.6;
@@ -168,7 +170,9 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
   const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  return { field: edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
+  const road = roadDistance(x, y, width, height) - ROAD_HALF_WIDTH;
+  wet = Math.min(wet, road);
+  return { field: road <= 0 || edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
 }
 
 /** Water and trunks stop reported strokes, whatever the client says. */
@@ -254,12 +258,6 @@ const MOW_RADIUS = 2.6;
 
 
 /**
- * Fastest a Mower drives, in Tiles per second. It mirrors `MAX_V` in the
- * client, and it is what makes a Mow Stroke cost time: the Lawn moves a Mower
- * no faster than a Mower can drive, whatever the client says.
- */
-const MAX_SPEED = 13;
-/**
  * Room above that speed. A Mower pushed by another Mower moves without
  * driving, and the two clocks are not the same clock.
  */
@@ -268,7 +266,7 @@ const SPEED_TOLERANCE = 1.15;
  * Seconds of travel a Mower may bank. Messages arrive in bursts after a
  * stall, and a Mower held up by the network really did drive the whole way,
  * so the budget is a bank and not a limit per message. It is also the longest
- * swath one Mow Stroke can cut: about 15 Tiles.
+ * swath one Mow Stroke can cut: about 29 Tiles at full slipstream speed.
  */
 const TRAVEL_BANK_SECONDS = 1;
 const TRAVEL_RATE = MAX_SPEED * SPEED_TOLERANCE;

@@ -225,14 +225,48 @@ and the grass is the only one of the three that touches the driving.
 A camera that moves on its own is what reduced motion asks about, so that one
 keeps the camera nailed and the bodies flat.
 
-## A corner is bought with the throttle
+## The country road and overtaking
+
+`src/road.ts` defines a gently warped loop around the landscape and one
+winding west-to-east route through the middle, joined at two rounded junctions.
+Fields and trees sit inside the loop. The road is 16 Tiles wide, leaving room
+for two mower decks to pass.
+The road clears water at crossings; its signed distance is shared by the
+server and client, and mirrored in WGSL. The minimap uses that same route.
+Existing field lanes remain as smaller paths. Trees stay clear of both passing
+lanes at the supported map sizes.
+
+`src/driving.ts` owns movement and the shared 25 Tiles/second speed ceiling.
+Road cruising is about 20 Tiles/second, versus 8.4 in standing grass. Grip is
+32 on the road and 14 on grass. Speed eases down when leaving the road.
+
+Space brakes. A tap while steering above 7 Tiles/second starts a drift lasting
+up to 1.6 seconds; the tap may precede steering by 0.25 seconds. Travel lags
+behind the mower's heading during the slide. Releasing Space lets it continue;
+straightening, slowing below 5, or a Stun ends it. Brake pressure builds over
+0.22 seconds; drift grip eases in over 0.16 and out over 0.2 seconds. Holding
+Space keeps braking and cannot repeatedly trigger a slide. Touch uses a held
+Brake button. Rear wheels leave ground-anchored skid marks while sliding,
+including other mowers based on their observed sideways travel. Marks last
+12 seconds, fade over the last five, and are capped at 1,200 segments.
+
+A moving mower 5–28 Tiles ahead on the road gives a slipstream when its travel
+direction agrees with the follower's. The tow builds over 0.8 seconds and fades
+over 3 seconds after pulling out, giving the follower speed to pass. Stale,
+stationary, opposing, and side-by-side peers give no tow. Peer travel comes
+from position reports, so drifting needs no additional network messages.
+
+Run `npm run test:driving` for movement and passing-clearance checks, and
+`npm run test:junctions` for client/server map agreement and water continuity.
+
+## Field cornering
 
 A Mower at full throttle used to come round inside 6.8 Tiles on a cut lane and
 4.9 in a standing Field, against a deck 5.2 Tiles wide: in the grass it turned
 inside its own width. Full throttle and full lock drew a perfect circle, so
 neither the corner nor the straight asked anything of the driver.
 
-The Grip is the answer. The wheels hold 14 Tiles a second squared sideways and
+Off the road, the wheels hold 14 Tiles a second squared sideways and
 no more, so the tightest circle a Mower can hold is its speed squared over
 that: 15.0 Tiles across on a cut lane and 7.7 in a standing Field. Under about
 four and a half Tiles a second the wheels never run out, and the Mower steers
@@ -244,9 +278,8 @@ width; stay on it and the Mower goes wide. That is the whole of the skill: the
 throttle is the steering at speed, and a straight pass through a Field is
 worth driving because the turn at the end of it costs something.
 
-Nothing here scrubs speed off a Mower for asking. The Grip refuses the turn,
-it does not take the speed away, so a Mower is never slowed by a key it
-pressed — and the Lawn still never sees a swath faster than `MAX_SPEED`.
+Steering alone does not scrub speed. The brake and drift add drag; the Grip
+limits the turn, and the Lawn caps travel using the shared `MAX_SPEED`.
 
 ## The water says no, and the Lawn says it too
 

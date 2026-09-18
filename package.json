@@ -5,9 +5,11 @@
   "scripts": {
     "build:score": "esbuild src/score.js --bundle --format=esm --minify --outfile=public/score.js",
     "build:achievements": "esbuild src/achievements.ts --bundle --format=esm --outfile=public/achievements.js",
-    "predev": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees",
+    "predev": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees && npm run build:driving",
     "dev": "wrangler dev",
-    "predeploy": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees",
+    "predeploy": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees && npm run build:driving",
+    "build:driving": "esbuild src/road.ts src/driving.ts --bundle --format=esm --outdir=public",
+    "test:driving": "npm run build:driving && node scripts/check-driving.mjs",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "build:ball": "esbuild src/ball.ts --bundle --format=esm --minify --outfile=public/ball.js",
