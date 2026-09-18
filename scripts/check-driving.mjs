@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { stepDrive, slipstream, MAX_SPEED } from '../public/driving.js';
-import { roadCentre, roadAt, roadDistance } from '../public/road.js';
+import { roadAt, roadDistance } from '../public/road.js';
 import { blocked, placeAt } from '../public/fields.js';
 
 const input = { throttle: 1, turn: 0, brake: false, road: 1, grass: 0, tow: 0, stunned: false };
@@ -71,14 +71,13 @@ for (let frame = 0; frame < 1200; frame++) {
 assert.ok(passed, 'draft, pull out, and complete a pass with equal cruising speeds');
 
 for (const [w, h] of [[408, 272], [288, 192]]) {
-  for (let x = w * 0.075; x < w * 0.925; x += 0.5) {
-    // Two mower centres six tiles apart, with clearance for both decks.
-    for (const offset of [-3, 0, 3]) {
-      const y = roadCentre(x, w, h) + offset;
-      assert.ok(roadAt(x, y, w, h) > 0.99);
-      assert.equal(placeAt(x, y, w, h).field, -1);
-      assert.ok(!blocked(x, y, w, h, 2.21), `passing lane blocked at ${x},${y}`);
-    }
+  // Sample the road itself. The route is an outer loop, so its centre is
+  // found from the distance field rather than from a straight-line centre.
+  for (let y = 3; y < h - 3; y += 0.5) for (let x = 3; x < w - 3; x += 0.5) {
+    if (roadDistance(x, y, w, h) > 1.5) continue;
+    assert.ok(roadAt(x, y, w, h) > 0.99);
+    assert.equal(placeAt(x, y, w, h).field, -1);
+    assert.ok(!blocked(x, y, w, h, 2.21), `passing lane blocked at ${x},${y}`);
   }
   let loopTiles = 0;
   for (let y = 3; y < h - 3; y += 0.5) for (let x = 3; x < w - 3; x += 0.5) {

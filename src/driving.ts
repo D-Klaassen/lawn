@@ -51,13 +51,13 @@ export function stepDrive(me: Driver, input: { throttle: number; turn: number; b
   const target = stunned ? 0 : input.tow;
   me.draft = (me.draft ?? 0) + (target - (me.draft ?? 0)) * (1 - Math.exp(-dt / (target > (me.draft ?? 0) ? 0.8 : 3)));
   const boost = me.draft * road;
-  const drag = (5.5 + 1.9 * grass - 2.25 * road + me.driftGrip * 0.25 + me.brakePressure * 5) * (stunned ? 3 : 1);
-  const accel = (62 + 6 * road) * (1 + boost * 0.25);
+  const drag = (5.5 + 1.9 * grass - 2.25 * road + me.driftGrip * 0.25 + me.brakePressure * 5 - boost * 0.7) * (stunned ? 3 : 1);
+  const accel = (62 + 6 * road) * (1 + boost * 0.8);
   const decay = Math.exp(-drag * dt);
   me.v = me.v * decay + throttle * (1 - me.brakePressure) * accel / drag * (1 - decay);
   // Coast down after leaving the road; don't snap the speed at the verge.
   me.v = Math.max(-6.5, Math.min(MAX_SPEED, me.v));
-  const limit = 13 + (ROAD_SPEED - 13) * road + 5 * boost;
+  const limit = 13 + (ROAD_SPEED - 13) * road + 8 * boost;
   if (me.v > limit) me.v = limit + (me.v - limit) * Math.exp(-dt * 7);
   const grip = 14 + road * (18 + me.driftGrip * 16);
   const ask = turn * 3 * Math.min(1, 0.25 + Math.abs(me.v) / 4);
