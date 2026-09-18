@@ -35,7 +35,7 @@ export const SEEDS = [
 ];
 
 /** Half the width of a lane, in Tiles. Nothing grows on it. */
-export const LANE = 2.3;
+export const LANE = 0.9;
 /** Half the width of open water, in Tiles. A Mower cannot enter it. */
 export const DITCH = 2.6;
 /** Bare bank between the water and the grass, in Tiles. */
@@ -72,11 +72,9 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
 export function placeAt(x, y, width, height) {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  const north = y < roadCentre(x, width, height);
   let first = 0, d0 = Infinity, d1 = Infinity;
   const distances = [];
   for (let k = 0; k < SEEDS.length; k++) {
-    if ((k < 4) !== north) { distances.push(Infinity); continue; }
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
@@ -92,7 +90,6 @@ export function placeAt(x, y, width, height) {
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
-    if ((a < 4) !== north) continue;
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
@@ -292,13 +289,11 @@ fn waterDepth(into : f32, beyond : f32) -> f32 {
 fn placeAt(p : vec2f) -> vec3f {
   var seeds = array<vec2f, SEED_COUNT>(${SEEDS.map(([u, v]) => `vec2f(${u.toFixed(4)}, ${v.toFixed(4)})`).join(', ')});
   let q = warpPoint(p);
-  let north = p.y < roadCentre(p.x);
   var distances : array<f32, SEED_COUNT>;
   var first = 0;
   var d0 = 1e20;
   var d1 = 1e20;
   for (var k = 0; k < SEED_COUNT; k = k + 1) {
-    if ((k < 4) != north) { distances[k] = 1e20; continue; }
     let d = length(q - seeds[k] * C.misc2.xy);
     distances[k] = d;
     if (d < d0) { d1 = d0; d0 = d; first = k; }
@@ -311,7 +306,6 @@ fn placeAt(p : vec2f) -> vec3f {
   for (var i = 0; i < ${DITCHES.length}; i = i + 1) {
     let a = ditches[i].x;
     let b = ditches[i].y;
-    if ((a < 4) != north) { continue; }
     let across = abs(distances[a] - distances[b]) * 0.5;
     var third = 1e20;
     for (var k = 0; k < SEED_COUNT; k = k + 1) {
@@ -332,7 +326,7 @@ fn placeAt(p : vec2f) -> vec3f {
 fn pathGrass(p : vec2f) -> f32 {
   let place = placeAt(p);
   let fringe = (vnoise(p * 1.2) - 0.5) * 0.7;
-  let lane = smoothstep(LANE, LANE + 1.8, place.x + fringe);
+  let lane = smoothstep(LANE, LANE + 0.8, place.x + fringe);
   // The bank is bare to BANK Tiles from the water, the same answer placeAt
   // gives, and the grass then comes in over the same width as a verge.
   let bank = smoothstep(BANK, BANK + 1.8, -place.y + fringe);

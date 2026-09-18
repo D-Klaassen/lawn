@@ -227,14 +227,15 @@ keeps the camera nailed and the bodies flat.
 
 ## The country road and overtaking
 
-`src/road.ts` defines a gently warped loop around the landscape and one
-winding west-to-east route through the middle, joined at two rounded junctions.
+`src/road.ts` defines one gently warped loop around the outside of the
+landscape. The interior stays parcelled grass; there is no road through the
+middle to cut fields apart.
 Fields and trees sit inside the loop. The road is 16 Tiles wide, leaving room
 for two mower decks to pass.
 The road clears water at crossings; its signed distance is shared by the
 server and client, and mirrored in WGSL. The minimap uses that same route.
-Existing field lanes remain as smaller paths. Trees stay clear of both passing
-lanes at the supported map sizes.
+Field boundaries remain as narrow verges rather than roads. Trees stay clear
+of the passing ring at the supported map sizes.
 
 `src/driving.ts` owns movement and the shared 25 Tiles/second speed ceiling.
 Road cruising is about 20 Tiles/second, versus 8.4 in standing grass. Grip is

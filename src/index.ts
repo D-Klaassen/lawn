@@ -99,7 +99,7 @@ const SEEDS: [number, number][] = [
   [0.20, 0.31], [0.40, 0.30], [0.60, 0.29], [0.80, 0.30],
   [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
-const LANE = 2.3;
+const LANE = 0.9;
 const DITCH = 2.6;
 const BANK = 1.6;
 const BRIDGE = 6;
@@ -139,11 +139,9 @@ function water(into: number, beyond: number): number {
 function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  const north = y < roadCentre(x, width, height);
   let first = 0, d0 = Infinity, d1 = Infinity;
   const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
-    if ((k < 4) !== north) { distances.push(Infinity); continue; }
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
@@ -156,7 +154,6 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   // Measure every ditch, even across a field boundary. Switching the nearest
   // pair at a junction must not cut off the shoreline or its collision margin.
   for (const [a, b] of DITCHES) {
-    if ((a < 4) !== north) continue;
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
