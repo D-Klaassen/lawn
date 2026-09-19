@@ -16,6 +16,7 @@
     "test:ball": "npm run build:ball && node scripts/check-ball.mjs",
     "test:achievements": "npm run build:achievements && node scripts/check-achievements.mjs",
     "test:junctions": "node scripts/check-junctions.mjs",
+    "test:map": "node scripts/check-map.mjs",
     "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
     "test:trees": "npm run build:trees && node scripts/check-trees.mjs",
     "test:positions": "npm run build:driving && node scripts/check-positions.mjs",

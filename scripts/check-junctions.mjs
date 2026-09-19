@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { placeAt } from '../public/fields.js';
 import { treeEarthAt } from '../public/trees.js';
-import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from '../public/road.js';
+import { ringDistance, STREET_HALF_WIDTH } from '../public/road.js';
 
 const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 const start = source.indexOf('const SEEDS:');
@@ -21,7 +21,7 @@ assert.ok(start >= 0 && end > start, 'cannot find the map in src/index.ts');
 // on has to come in here, or this check tests a map that is not the map.
 const server = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\nplaceAt;', {
   target: ts.ScriptTarget.ES2022,
-}), { treeEarthAt, roadDistance, roadCentre, ROAD_HALF_WIDTH });
+}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH });
 let checked = 0;
 for (const [width, height] of [[408, 272], [288, 192]]) {
   for (let y = 1; y < height - 1; y += 0.7) {
@@ -30,6 +30,8 @@ for (const [width, height] of [[408, 272], [288, 192]]) {
       const authority = server(x, y, width, height);
       assert.equal(client.field, authority.field);
       assert.equal(client.wet, authority.wet);
+      assert.equal(client.street, authority.street);
+      assert.equal(client.edge, authority.edge);
       // A centimetre-sized step must not jump across an invisible bank.
       for (const [dx, dy] of [[0.01, 0], [0, 0.01]]) {
         const next = placeAt(x + dx, y + dy, width, height);

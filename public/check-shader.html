@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Does the shader read the same map?</title>
+<style>
+  body { font: 15px/1.6 ui-monospace, monospace; margin: 2rem auto; max-width: 52rem; padding: 0 1rem;
+         background: #14180f; color: #d8e0cc; }
+  h1 { font-size: 1.1rem; font-weight: 500; }
+  #verdict { font-size: 1.3rem; padding: 0.6rem 0.9rem; border-radius: 6px; display: inline-block; }
+  .pass { background: #22331a; color: #b9e08a; }
+  .fail { background: #3a1c18; color: #f0a79a; }
+  .working { background: #2a2a1a; color: #ded39a; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  td, th { text-align: left; padding: 0.15rem 1.2rem 0.15rem 0; }
+  th { color: #97a487; font-weight: 500; }
+  p { color: #97a487; }
+</style>
+</head>
+<body>
+<h1>Does the shader read the same map as the Lawn?</h1>
+<p>
+  There are three copies of <code>placeAt</code>: the client's, the Lawn's, and
+  the shader's. <code>scripts/check-junctions.mjs</code> holds the first two to
+  one answer. This page is the third: it compiles the very
+  <code>PLACE_WGSL</code> the game is built from, runs it over the Lawn on the
+  GPU, and reads it against the JavaScript point by point. Serve the site and
+  open <code>/check-shader.html</code>.
+</p>
+<div id="verdict" class="working">working…</div>
+<div id="report"></div>
+<script type="module">
+import { PLACE_WGSL, placeAt } from '/fields.js';
+
+const verdict = document.getElementById('verdict');
+const report = document.getElementById('report');
+
+/**
+ * How far apart the two may be and still be the same map.
+ *
+ * The GPU works in f32 and JavaScript in f64, and the two `sin` are not the
+ * same `sin`, so they never agree to the bit. A hundredth of a Tile is far
+ * below anything a Mower or an eye can find, and far above the noise: the
+ * mistakes this page is here to catch — a seam read as the wrong kind, a
+ * seed counted in the wrong order — move the answer by Tiles, not by
+ * hundredths.
+ */
+const TOLERANCE = 0.01;
+/**
+ * A Field is a whole number and cannot be within a tolerance of anything, so
+ * ownership is only read where the point is not on a boundary. Within this
+ * much of one, the two are allowed to disagree about which side it is on.
+ */
+const OFF_THE_EDGE = 0.05;
+
+const say = (html) => { report.innerHTML += html; };
+
+function fail(message) {
+  verdict.className = 'fail';
+  verdict.textContent = message;
+}
+
+const device = await navigator.gpu?.requestAdapter().then(a => a?.requestDevice()).catch(() => null);
+if (!device) {
+  fail('no WebGPU here — this check needs a GPU, so it cannot run in node');
+  throw new Error('no device');
+}
+
+/**
+ * The shader needs somewhere to read the size of the Lawn from. In the game
+ * that is the camera's uniform; here it is the one field of it `placeAt`
+ * touches, which is what makes this string compilable on its own.
+ */
+const SOURCE = `
+struct Camera { misc2 : vec4f };
+@group(0) @binding(0) var<uniform> C : Camera;
+@group(0) @binding(1) var<storage, read> points : array<vec2f>;
+@group(0) @binding(2) var<storage, read_write> answers : array<vec4f>;
+${PLACE_WGSL}
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let i = gid.x;
+  if (i >= arrayLength(&points)) { return; }
+  answers[i] = placeAt(points[i]);
+}
+`;
+
+device.pushErrorScope('validation');
+const module = device.createShaderModule({ code: SOURCE });
+const info = await module.getCompilationInfo();
+const errors = info.messages.filter(m => m.type === 'error');
+if (errors.length) {
+  fail('the shader does not compile');
+  say('<pre>' + errors.map(m => `line ${m.lineNum}: ${m.message}`).join('\n') + '</pre>');
+  throw new Error('compile');
+}
+const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+const compiled = await device.popErrorScope();
+if (compiled) { fail('the shader does not compile'); say('<pre>' + compiled.message + '</pre>'); throw new Error('compile'); }
+
+/** Ask the GPU what it makes of these points. */
+async function ask(points, width, height) {
+  const size = new Float32Array([width, height, 0, 0]);
+  const camera = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(camera, 0, size);
+  const input = device.createBuffer({ size: points.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(input, 0, points);
+  const bytes = (points.length / 2) * 16;
+  const output = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const staging = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const bind = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: camera } },
+      { binding: 1, resource: { buffer: input } },
+      { binding: 2, resource: { buffer: output } },
+    ],
+  });
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bind);
+  pass.dispatchWorkgroups(Math.ceil(points.length / 2 / 64));
+  pass.end();
+  encoder.copyBufferToBuffer(output, 0, staging, 0, bytes);
+  device.queue.submit([encoder.finish()]);
+  await staging.mapAsync(GPUMapMode.READ);
+  const answers = new Float32Array(staging.getMappedRange().slice(0));
+  staging.unmap();
+  for (const buffer of [camera, input, output, staging]) buffer.destroy();
+  return answers;
+}
+
+let broken = 0, checked = 0;
+const rows = [];
+
+for (const [width, height, step] of [[408, 272, 0.7], [288, 192, 0.7]]) {
+  const points = [];
+  for (let y = 1; y < height - 1; y += step) for (let x = 1; x < width - 1; x += step) points.push(x, y);
+  const answers = await ask(new Float32Array(points), width, height);
+
+  const worst = { edge: 0, wet: 0, street: 0 };
+  const where = { edge: null, wet: null, street: null };
+  let owners = 0, firstOwner = null;
+
+  for (let i = 0; i < points.length / 2; i++) {
+    const x = points[i * 2], y = points[i * 2 + 1];
+    const mine = placeAt(x, y, width, height);
+    const gaps = {
+      edge: Math.abs(answers[i * 4] - mine.edge),
+      wet: Math.abs(answers[i * 4 + 1] - mine.wet),
+      street: Math.abs(answers[i * 4 + 3] - mine.street),
+    };
+    for (const key of ['edge', 'wet', 'street']) {
+      if (gaps[key] > worst[key]) { worst[key] = gaps[key]; where[key] = [x.toFixed(1), y.toFixed(1)]; }
+    }
+    // The shader names the nearest seed wherever it stands, and the
+    // JavaScript answers -1 once the ground is bare. Only where a Field is
+    // owned, and not within a hair of a boundary, are the two saying the same
+    // thing about the same point.
+    const named = Math.round(answers[i * 4 + 2]);
+    const onEdge = mine.edge < OFF_THE_EDGE || Math.abs(mine.wet) < OFF_THE_EDGE
+      || Math.abs(mine.street - 7) < OFF_THE_EDGE;
+    if (mine.field >= 0 && !onEdge && named !== mine.field) {
+      owners++;
+      firstOwner = firstOwner ?? [x.toFixed(1), y.toFixed(1), named, mine.field];
+    }
+    checked++;
+  }
+
+  const bad = ['edge', 'wet', 'street'].filter(k => worst[k] > TOLERANCE);
+  if (bad.length || owners) broken++;
+  rows.push(`<h1>${width} x ${height} — ${(points.length / 2).toLocaleString()} points</h1>
+    <table>
+      <tr><th>quantity</th><th>worst gap</th><th>at</th></tr>
+      ${['edge', 'wet', 'street'].map(k => `<tr><td>${k}</td><td>${worst[k].toExponential(2)} Tiles</td>
+        <td>${where[k] ? where[k].join(', ') : ''}</td></tr>`).join('')}
+      <tr><td>Field named differently</td><td>${owners} points</td>
+        <td>${firstOwner ? `at ${firstOwner[0]}, ${firstOwner[1]}: shader ${firstOwner[2]}, Lawn ${firstOwner[3]}` : ''}</td></tr>
+    </table>`);
+}
+
+say(rows.join(''));
+if (broken) fail('the shader reads a different map');
+else {
+  verdict.className = 'pass';
+  verdict.textContent = `the shader reads the same map — ${checked.toLocaleString()} points, all within ${TOLERANCE} Tiles`;
+}
+</script>
+</body>
+</html>

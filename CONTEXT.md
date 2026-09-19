@@ -17,14 +17,25 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Slack** — the last part in a hundred of a Field, which may stand and the
   Field still count as cut. It is what turns the end of a quest back into
   mowing.
-- **Lane** — the bare seam between two Fields. Nothing grows on it and every
-  Mower drives over it.
-- **Ditch** — a seam that carries water instead of a lane. A Mower cannot
-  enter it: it stops a Mower at the bank.
-- **Bridge** — the dry crossing that cuts every Ditch, at the middle point
-  between the two seeds the Ditch runs between. It is what keeps a Ditch a
+- **Seam** — the boundary between two Fields, where the two nearest seeds are
+  the same distance away. Every seam is a Path, a Street or Water, and those
+  three are the whole map.
+- **Path** — the bare seam between two Fields. Nothing grows on it and every
+  Mower drives over it at the speed it was going.
+- **Street** — a seam a Mower drives fast on, and the one place a slipstream
+  works. A Street is always a boundary and never a cut: it is either a seam,
+  which lies between two Fields, or the ring, which lies outside all of them.
+  No Street ever splits a Field.
+- **Ring** — the Street round the kerb of the Lawn. It runs in the margin
+  outside every Field, which is what keeps it from cutting the parcels it
+  passes.
+- **Verge** — the bare ground between the ring and the edge of the Lawn. It
+  is what a Field gives up so the ring can be a boundary.
+- **Water** — a seam a Mower cannot enter: it stops a Mower at the bank.
+- **Bridge** — the dry crossing that cuts every run of Water, at the middle
+  point between the two seeds it runs between. It is what keeps Water a
   detour and not a wall.
-- **Bank** — the bare ground between the water and the grass.
+- **Bank** — the bare ground between the Water and the grass.
 - **Report** — the one message a Mower sends about itself: where it is and
   which way it points. It is the Mow Stroke and the position at once, because
   both say the same thing about the same movement. See "What a report costs".
@@ -85,19 +96,27 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 ## The water wanders, or it is a box
 
 `across` and `along` are the two sides of a rectangle drawn in a seam's own
-frame, so a Ditch measured from them is a rectangle — and that is exactly what
-it looked like beside ground that had learned to be irregular. The lane already
+frame, so Water measured from them is a rectangle — and that is exactly what
+it looked like beside ground that had learned to be irregular. A Path already
 wanders, and so does the bare earth around a tree.
 
 `shoreWander` is three sines of the unwarped point, mean zero, added to the
-Ditch's half-width and to both of its ends. The Ditch keeps its width on
+Water's half-width and to both of its ends. The Water keeps its width on
 average and only its edge moves, so the crossing is still a crossing and every
 Field is still reachable — `scripts/check-map.mjs` is what says so, and it is
 the reason the wander is a Tile and not three.
 
-It is one wander per point and not one per Ditch: it depends on where the point
-is and not on which seam is being measured, and `placeAt` is read once per Tile
-of the Lawn on both sides.
+It is one wander per point and not one per run of Water: it depends on where
+the point is and not on which seam is being measured, and `placeAt` is read
+once per Tile of the Lawn on both sides.
+
+The shoreline is clamped on the Street, and that is only safe because the
+Street answers with a distance. It first answered with a choice — "does my
+nearest pair of seeds carry a Street, yes or no" — and a choice is not a
+smooth function of the point: the answer changed along the line where the
+second-nearest seed changes, which put a step in the shoreline there, an
+invisible bank a Mower stopped at. `scripts/check-junctions.mjs` is what found
+it.
 
 It goes in `placeAt` and not in the shading, so the water a Mower sees is the
 water it cannot drive into. Softening only the drawn edge would have been half
@@ -107,10 +126,18 @@ the work and a lie.
 
 The map is not a drawing and it is not stored. One table of nine seeds says
 where each Field sits, in fractions of the Lawn, and everything else follows
-from it: a point belongs to the Field whose seed is nearest, the seam between
-two Fields is where the two nearest seeds are the same distance away, and a
-seam named in `DITCHES` carries water. The ground is bent by a pair of sines
-before the seeds are measured against it, so no seam is a straight line.
+from it: a point belongs to the Field whose seed is nearest, and the seam
+between two Fields is where the two nearest seeds are the same distance away.
+A second table, `SEAMS`, says what each seam is made of — a Street, Water, or
+the Path that a seam is when nothing names it. The ground is bent by a pair of
+sines before the seeds are measured against it, so no seam is a straight line.
+
+A Street has to be a seam, because a seam lies between two Fields by
+construction and so can never cut through one. The ring is the exception that
+proves it: it is not a seam, so it is held outside every Field instead, and
+the ground it would have taken out of a parcel is Verge and not Field at all.
+That is the whole of the rule "no Street splits a Field", and it is worth the
+five parts in a hundred of grass that the Verge costs.
 
 That shape is why the Lawn can grow. Nothing in the map is tied to 408 x 272:
 the seeds are fractions, so the same table draws the same map on a bigger
@@ -118,15 +145,39 @@ Lawn, and the Fields keep their names and their places.
 
 There are three readers of that table, and only one writer of it. The client
 and the minimap import `public/fields.js`. The shader is handed its own copy
-of the map as WGSL, built from the same table by that same file, so the
-ground a Mower drives on and the ground it sees cannot drift apart. The Lawn
+of the map as WGSL, built from the same table by that same file. The Lawn
 keeps a mirror in `src/index.ts`, for the same reason it mirrors the Growth
 Rate: it counts the blades, so it has to know which Tiles are grass. That one
 copy must stay identical.
 
+Being built from the same table is what keeps the widths and the seams from
+drifting. It is not what keeps the answers together, and it was easy to read
+it as though it were. The working — nine seeds measured, three kept, eight
+seams weighed — is written twice over, once in JavaScript and once in WGSL,
+and two hands write two answers. Two checks hold the three copies to one:
+`scripts/check-junctions.mjs` reads the Lawn against the client over a third
+of a million points, and `public/check-shader.html` reads the shader against
+the client over the same ground, by compiling `PLACE_WGSL` and running it on
+the GPU. The second needs a GPU, so it is a page and not a script: serve the
+site and open `/check-shader.html`.
+
+Both were written against a fault, not against a hope. The shader check was
+shown three of them — a Street that never ends, a warp out by one part in
+five hundred, and a shader naming the second-nearest seed — and it named all
+three before it was believed.
+
 `node scripts/check-map.mjs` reads the map the way a Mower does and says
-whether it holds together: how much of the Lawn is grass, lane and water, and
-whether every Tile of every Field can still be cut.
+whether it holds together: how much of the Lawn is grass, Path, Street and
+Water, and whether every Tile of every Field can still be cut. It holds the
+map to three rules and fails when one breaks — every Field is one piece, every
+Tile of dry ground can be reached, and no Tile is both wet and on a Street.
+The first is the one that says no Street splits a Field.
+
+A crumb is not a split. The bank is narrower than a Mower is wide, so the odd
+Tile of grass ends up in a pocket no Mower can enter, and the wander of a Path
+now and then pinches one off. The Slack is what says how much of that a quest
+can carry, and it is the same Slack the tracker measures against: below it,
+nothing on the screen can tell.
 
 ## Finishing a Field is worth a moment
 
@@ -185,12 +236,12 @@ the screen.
 
 **The grass is heavy.** Deep grass costs a Mower a quarter of its speed:
 11.3 Tiles a second on ground it has already cut, 8.0 in a standing Field.
-It is drag and not a limit, so a Mower leaving a cut lane settles into the
+It is drag and not a limit, so a Mower leaving a cut swath settles into the
 grass instead of hitting a wall, and the reading is taken across the leading
 edge of the deck — the Tile under the middle of a Mower was cut by that
 Mower, and a Mower measured there would never meet grass at all.
 
-Nothing here ever makes a Mower faster than it was. The speed of a cut lane
+Nothing here ever makes a Mower faster than it was. The speed of a cut swath
 is the speed the Lawn has always allowed; the grass is what takes it away.
 That matters, because a boost would have to be bought from `MAX_SPEED` on the
 Lawn, and every Tile a second added there is a Tile a second a rewritten
@@ -202,13 +253,13 @@ middle of the frame, and then the only thing on the screen that says thirteen
 Tiles a second is the ground going past. The camera looks up to five Tiles
 ahead and takes 0.16 seconds to get there, so the Mower runs out ahead of the
 middle as it picks up speed and settles back as it stops. It stands further
-off the faster the Mower goes, which widens the road ahead where there is
+off the faster the Mower goes, which widens the view ahead where there is
 most of it to read.
 
 It leads on the travel and never on the throttle. A Mower held against a bank
 or another Mower is going nowhere however hard it pushes, and a camera that
 read the throttle would walk away and leave it behind. Measured: 2.43 Tiles
-of lead on a cut lane, 1.80 in deep grass, 0 in the corner of the Lawn at
+of lead on a cut swath, 1.80 in deep grass, 0 in the corner of the Lawn at
 full throttle.
 
 **The body wears it.** The nose lifts about two and a half degrees under
@@ -225,21 +276,44 @@ and the grass is the only one of the three that touches the driving.
 A camera that moves on its own is what reduced motion asks about, so that one
 keeps the camera nailed and the bodies flat.
 
-## The country road and overtaking
+## A Street is measured, not chosen
 
-`src/road.ts` defines one gently warped loop around the outside of the
-landscape. The interior stays parcelled grass; there is no road through the
-middle to cut fields apart.
-Fields and trees sit inside the loop. The road is 16 Tiles wide, leaving room
-for two mower decks to pass.
-The road clears water at crossings; its signed distance is shared by the
-server and client, and mirrored in WGSL. The minimap uses that same route.
-Field boundaries remain as narrow verges rather than roads. Trees stay clear
-of the passing ring at the supported map sizes.
+The first Street read the map by asking whether the nearest pair of seeds
+carried one. That is a yes or a no, and it is why the gravel used to stop dead
+in the middle of open ground: the answer flips along the line where the
+second-nearest seed changes, so the Street ended on a straight hard edge with
+grass and earth carrying on either side of it, and a Mower lost its speed
+mid-corner for no reason it could see.
+
+A Street is measured now. Each seam that carries one is measured on its own:
+`across` is the distance to the seam, and the junction where a third Field
+comes nearer is where the seam ends. Before that junction the answer is
+`across`, exactly as it was. Past it, the answer is the distance to the
+junction itself, so a Street that ends rounds off over its own width instead
+of being cut with a knife. The map takes the nearest of those and the kerb.
+
+That is also what lets the Water be clamped on the Street again, which is what
+the ring alone used to do: a distance can be clamped on, and a choice cannot.
+It costs a third seed in the main loop and eight cheap sums, and it buys every
+edge on the map being one a Mower can see coming.
+
+## The Streets and overtaking
+
+There are two Streets and they are one route. `src/road.ts` defines the ring,
+a gently warped loop at the kerb of the Lawn; `SEAMS` in `public/fields.js`
+names the eight seams between the top row of Fields and the bottom row, which
+together read as one run of road across the whole width. The run meets the
+ring at both ends, so a Mower can stay on a Street from any part of it to any
+other — `scripts/check-driving.mjs` is what says so.
+
+A Street is 14 Tiles wide, which leaves room for two mower decks to pass. A
+Street clears the Water it crosses; its signed distance is shared by the
+server and the client, and mirrored in WGSL. The minimap draws the same
+Streets.
 
 `src/driving.ts` owns movement and the shared 25 Tiles/second speed ceiling.
-Road cruising is about 20 Tiles/second, versus 8.4 in standing grass. Grip is
-32 on the road and 14 on grass. Speed eases down when leaving the road.
+Street cruising is about 20 Tiles/second, versus 8.4 in standing grass. Grip
+is 32 on a Street and 14 on grass. Speed eases down when leaving one.
 
 Space brakes. A tap while steering above 7 Tiles/second starts a drift lasting
 up to 1.6 seconds; the tap may precede steering by 0.25 seconds. Travel lags
@@ -251,7 +325,7 @@ Brake button. Rear wheels leave ground-anchored skid marks while sliding,
 including other mowers based on their observed sideways travel. Marks last
 12 seconds, fade over the last five, and are capped at 1,200 segments.
 
-A moving mower 5–28 Tiles ahead on the road gives a slipstream when its travel
+A moving mower 5–28 Tiles ahead on a Street gives a slipstream when its travel
 direction agrees with the follower's. The tow builds over 0.8 seconds and fades
 over 3 seconds after pulling out, giving the follower speed to pass. Stale,
 stationary, opposing, and side-by-side peers give no tow. Reports carry the actual travel vector after collisions, so drifting and
@@ -262,14 +336,14 @@ Run `npm run test:driving` for movement and passing-clearance checks, and
 
 ## Field cornering
 
-A Mower at full throttle used to come round inside 6.8 Tiles on a cut lane and
+A Mower at full throttle used to come round inside 6.8 Tiles on a cut swath and
 4.9 in a standing Field, against a deck 5.2 Tiles wide: in the grass it turned
 inside its own width. Full throttle and full lock drew a perfect circle, so
 neither the corner nor the straight asked anything of the driver.
 
-Off the road, the wheels hold 14 Tiles a second squared sideways and
+Off a Street, the wheels hold 14 Tiles a second squared sideways and
 no more, so the tightest circle a Mower can hold is its speed squared over
-that: 15.0 Tiles across on a cut lane and 7.7 in a standing Field. Under about
+that: 15.0 Tiles across on a cut swath and 7.7 in a standing Field. Under about
 four and a half Tiles a second the wheels never run out, and the Mower steers
 as it always did — a Mower at a walk still turns on the spot.
 
@@ -284,9 +358,9 @@ limits the turn, and the Lawn caps travel using the shared `MAX_SPEED`.
 
 ## The water says no, and the Lawn says it too
 
-A Ditch is the first thing on the Lawn a Mower cannot drive through, so both
+Water is the first thing on the Lawn a Mower cannot drive through, so both
 sides have to hold it. The client keeps a Mower a whole Mower's width from
-the water, and a step that would end in a Ditch is tried again along each
+the water, and a step that would end in Water is tried again along each
 axis on its own, so a Mower that meets a bank at an angle slides along it
 instead of stopping dead.
 
@@ -299,15 +373,15 @@ This costs an honest Mower nothing. Its own client already holds it 2.2 Tiles
 from the water, and the Lawn stops only at the water itself, so the two
 never disagree. What it closes is the whole of the gain: the far bank stands
 6.8 Tiles from the near water's edge and a Mow Stroke reaches about 2.03, so no
-Mower cuts across a Ditch, however its client is written.
+Mower cuts across Water, however its client is written.
 
 One hole stays open, and it is the one that was already there: a Mower the
 Lawn has not seen is believed once, so a reconnection can put a Mower down on
-the far side of a Ditch. It cuts nothing on the way — the first Mow Stroke of
-a Mower only says where it starts — so a Ditch costs a cheat one reconnection
+the far side of the Water. It cuts nothing on the way — the first Mow Stroke
+of a Mower only says where it starts — so Water costs a cheat one reconnection
 and buys it no grass.
 
-Every Ditch is cut by one Bridge, and `scripts/check-map.mjs` proves the
+Every run of Water is cut by one Bridge, and `scripts/check-map.mjs` proves the
 result is one piece of ground: if it were not, a Field behind the water could
 never reach 100% and its quest could never be completed.
 
@@ -435,7 +509,7 @@ press.
 
 There are five: a wave, a thumb, a smile, a heart and a skull. The first four
 say a friendly thing, and a Lawn where every answer is friendly has no answer
-for a Mower that has just driven you into a Ditch. The skull is that answer,
+for a Mower that has just driven you into the Water. The skull is that answer,
 and it is the mildest one the Lawn will ever hand out.
 
 The pictures live on the client, and the Lawn knows only how many there are:
@@ -1021,9 +1095,14 @@ both, and the minimap is measured against the height as well as the width.
 
 ## Files
 
-- `public/fields.js` — the map: the seeds, the lanes, the Ditches, and the
-  WGSL the shader is built from. One file, three readers.
+- `public/fields.js` — the map: the seeds, the seams and what each one is
+  made of, and the WGSL the shader is built from. One file, three readers.
+- `src/road.ts` — the ring Street at the kerb, and the only part of the map
+  that is not a seam.
 - `scripts/check-map.mjs` — reads that map and says whether it holds together.
+- `public/check-shader.html` — the same proof for the third copy: it compiles
+  `PLACE_WGSL` and runs it on the GPU against the client's `placeAt`. A GPU is
+  not something node has, so this one is opened and not run.
 - `scripts/check-junctions.mjs` — walks a third of a million points and proves
   the Lawn's copy of the map answers exactly what the client's does. It is the
   only thing that does, so it is wired into `package.json` as `test:junctions`;
