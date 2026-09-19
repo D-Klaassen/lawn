@@ -723,7 +723,7 @@
   <span><kbd>Q</kbd>Awards</span>
   <span><kbd>Tab</kbd>Score</span>
 </div>
-<div id="help">W A S D or arrows to drive · Space to brake, tap while turning to drift · follow a mower on the road for a slipstream · E emotes · Q achievements · M map · Tab board</div>
+<div id="help">W A S D or arrows to drive · Space to brake, tap while turning to drift · follow a mower on a street for a slipstream · E emotes · Q achievements · M map · Tab board</div>
 <div id="drive-status" aria-label="Driving status"><span id="drive-pace">0</span><span id="drive-mode">Mowing</span><meter id="draft-meter" min="0" max="1" value="0" aria-label="Slipstream strength"></meter></div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
@@ -768,9 +768,8 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { TREES, treeMesh } from '/trees.js';
-import { roadAt } from '/road.js';
-import { stepDrive, slipstream, ROAD_SPEED } from '/driving.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, DITCHES, BRIDGE } from '/fields.js';
+import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
+import { fieldAt, wetAt, streetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
@@ -1040,7 +1039,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) savePosition();
 });
 
-const MAX_V = ROAD_SPEED;
+const MAX_V = STREET_SPEED;
 const drivePace = document.getElementById('drive-pace');
 const driveMode = document.getElementById('drive-mode');
 const draftMeter = document.getElementById('draft-meter');
@@ -1873,7 +1872,7 @@ function useTouch() { document.body.classList.add("touch"); }
 if (matchMedia("(hover: none) and (pointer: coarse)").matches) useTouch();
 addEventListener("touchstart", useTouch, { once: true, passive: true });
 if (matchMedia("(pointer: coarse)").matches) {
-  help.textContent = "Drag the stick to drive · tap Brake while turning to drift · follow mowers on the road to slipstream";
+  help.textContent = "Drag the stick to drive · tap Brake while turning to drift · follow mowers on a street to slipstream";
 }
 
 /* ---- the tracker folds away where the screen is small ---- */
@@ -2030,10 +2029,10 @@ function drive(dt, lawnNow) {
 
   if (stunned) { fwd = 0; turn = 0; }
   const wasV = me.v, wasA = me.a;
-  const onRoad = (x, y) => roadAt(x, y, W, H);
-  const road = onRoad(me.x, me.y);
+  const onStreet = (x, y) => streetAt(x, y, W, H);
+  const street = onStreet(me.x, me.y);
   const motion = stepDrive(me, { throttle: fwd, turn, brake: held(' ') || touchBrake,
-    road, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onRoad), stunned }, dt);
+    street, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onStreet), stunned }, dt);
   // The daze reads on the Mower itself, and not only in the Stars above it.
   if (stunned && !reducedMotion.matches) me.a += Math.sin(now * 0.021) * 1.3 * dt;
 
@@ -2045,8 +2044,8 @@ function drive(dt, lawnNow) {
   moveMower(motion.vx * dt, motion.vy * dt, now);
   drivePace.textContent = `${Math.round(Math.hypot(me.x - px, me.y - py) * rate)} tiles/s`;
   driveMode.textContent = stunned ? 'Dazed' : motion.drifting ? 'Drifting' : (held(' ') || touchBrake) ? 'Braking'
-    : me.draft * road > 0.15 ? 'Slipstream' : road > 0.5 ? 'Country road' : 'Mowing';
-  draftMeter.value = me.draft * road;
+    : me.draft * street > 0.15 ? 'Slipstream' : street > 0.5 ? 'On the street' : 'Mowing';
+  draftMeter.value = me.draft * street;
 
   // Where the Mower is really going, which is not always where it is pointed
   // or how hard it is pushing: a Mower held against a bank or another Mower
@@ -2529,7 +2528,7 @@ fn vs_bake(@builtin(vertex_index) vi : u32) -> BakeOut {
 @fragment
 fn fs_bake(i : BakeOut) -> @location(0) vec4f { return groundStill(i.w); }
 
-fn groundColour(w : vec2f) -> vec3f {
+fn groundColour(w : vec2f, across : f32) -> vec3f {
   let still = textureSampleLevel(groundTex, fieldSamp,
     (w + vec2f(GROUND_MARGIN)) / (C.misc2.xy + 2.0 * GROUND_MARGIN), 0.0);
   // Break both edges with noise, so neither the cut nor the border is a line.
@@ -2551,11 +2550,10 @@ fn groundColour(w : vec2f) -> vec3f {
   let worn = mix(dirt, vec3f(0.31, 0.34, 0.14), 0.6);
   col = mix(mix(dirt, worn, smoothstep(0.0, 0.5, verge)),
             col, smoothstep(0.35, 1.0, verge));
-  let across = roadDistance(w);
-  let road = 1.0 - smoothstep(ROAD_HALF_WIDTH - 0.4, ROAD_HALF_WIDTH + 0.8, across + grain * 0.35);
+  let street = 1.0 - smoothstep(STREET_HALF_WIDTH - 0.4, STREET_HALF_WIDTH + 0.8, across + grain * 0.35);
   let tracks = exp(-pow((across - 3.5) / 0.85, 2.0));
   let gravel = vec3f(0.49, 0.39, 0.25) * (1.0 + grain * 0.09 - tracks * 0.12);
-  col = mix(col, gravel, road);
+  col = mix(col, gravel, street);
   return mix(vec3f(0.38, 0.48, 0.24), col, still.y);
 }
 
@@ -2583,8 +2581,8 @@ fn vs_ground(@builtin(vertex_index) vi : u32) -> GOut {
 fn fs_ground(i : GOut) -> @location(0) vec4f {
   let w3 = vec3f(i.w.x, -0.015, i.w.y);
   var n = vec3f(0.0, 1.0, 0.0);
-  var base = groundColour(i.w);
   let place = placeAt(i.w);
+  var base = groundColour(i.w, place.w);
   let depth = place.y;
   let lit = fieldFlare(i.w, place.z);
   base = mix(base, vec3f(0.96, 0.88, 0.48), min(0.42, lit * 0.5));
@@ -2597,7 +2595,7 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
                       ripple(i.w + vec2f(0.0, e), C.misc.x) - h0) * (2.6 / e);
     n = normalize(mix(n, normalize(vec3f(-slope.x, 1.0, -slope.y)), wetness));
     // Shallow water keeps the colour of the bed; deep water loses it.
-    let deep = smoothstep(0.0, DITCH, depth);
+    let deep = smoothstep(0.0, WATER, depth);
     base = mix(base, mix(vec3f(0.22, 0.34, 0.28), vec3f(0.05, 0.15, 0.19), deep), wetness);
   }
   // The daze of the shadow map may only be read from uniform control flow,
@@ -3340,7 +3338,7 @@ function render(now, ts, dt) {
   // looks where the Mower is going rather than where it stands, and takes its
   // time getting there, so the Mower runs out ahead of the middle as it picks
   // up speed and settles back into it as it stops. It stands further off the
-  // faster the Mower goes, which widens the road ahead at the speed there is
+  // faster the Mower goes, which widens the view ahead at the speed there is
   // most of it to read.
   const still = reducedMotion.matches;
   const driftX = (me.driftX ?? 0) / MAX_V, driftY = (me.driftY ?? 0) / MAX_V;
@@ -3544,7 +3542,7 @@ const slipParticles = [];
 
 function drawSlipstream(cw, ch, dpr) {
   const now = performance.now();
-  const strength = (me.draft ?? 0) * roadAt(me.x, me.y, W, H);
+  const strength = (me.draft ?? 0) * streetAt(me.x, me.y, W, H);
   if (strength > 0.08 && !reducedMotion.matches) {
     const ca = Math.cos(me.travel ?? me.a), sa = Math.sin(me.travel ?? me.a);
     for (let i = 0; i < 2; i++) slipParticles.push({
@@ -3621,7 +3619,7 @@ function drawWheelWake(cw, ch, dpr) {
         const grass = fieldAt(x, y, W, H) >= 0;
         const px = x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
         const py = y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
-        const bridge = DITCHES.some(([a, b]) => Math.hypot(
+        const bridge = WATERS.some(([a, b]) => Math.hypot(
           px - (SEEDS[a][0] + SEEDS[b][0]) * W / 2,
           py - (SEEDS[a][1] + SEEDS[b][1]) * H / 2) < BRIDGE + 2.6);
         if (!bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
@@ -4011,7 +4009,7 @@ function fieldCentres() {
         const angle = step * Math.PI / 8;
         const px = centre.x + Math.cos(angle) * radius;
         const py = centre.y + Math.sin(angle) * radius;
-        if (fieldAt(px, py, W, H) === i && roadAt(px, py, W, H) === 0) return { name: FIELD_NAMES[i], x: px, y: py };
+        if (fieldAt(px, py, W, H) === i && streetAt(px, py, W, H) === 0) return { name: FIELD_NAMES[i], x: px, y: py };
       }
     }
     return { name: FIELD_NAMES[i], x: centre.x, y: centre.y };

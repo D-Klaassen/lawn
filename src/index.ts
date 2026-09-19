@@ -1,5 +1,5 @@
 import { treeAt, treeEarthAt } from "./trees";
-import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from "./road";
+import { ringDistance, STREET_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
@@ -91,19 +91,22 @@ function regrowTable(width: number, height: number): Float32Array {
 
 /**
  * The map: where each seed of a Field sits, in fractions of the Lawn, how
- * wide a lane and a Ditch are, and which seams carry water. It is the same
- * table as `public/fields.js` and must stay so: the two sides have to agree
- * on which Tiles are grass, or a score counts blades that were never there.
+ * wide a Path and a run of Water are, and what each seam is made of. It is
+ * the same table as `public/fields.js` and must stay so: the two sides have
+ * to agree on which Tiles are grass, or a score counts blades that were never
+ * there.
  */
 const SEEDS: [number, number][] = [
   [0.20, 0.31], [0.40, 0.30], [0.60, 0.29], [0.80, 0.30],
   [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
-const LANE = 0.9;
-const DITCH = 2.6;
+const PATH = 2.6;
+const WATER = 3.4;
 const BANK = 1.6;
 const BRIDGE = 6;
-const DITCHES = [[0, 1], [1, 2], [2, 3], [4, 5], [5, 6], [6, 7], [7, 8]];
+/** Mirrors `SEAMS` in `public/fields.js`: the seams that carry Water, and the Streets. */
+const WATERS = [[1, 2], [5, 6], [7, 8]];
+const STREETS = new Set(["0,4", "0,5", "1,5", "1,6", "2,6", "2,7", "3,7", "3,8"]);
 const SHORE_RADIUS = 1.2;
 
 function warpX(x: number, y: number): number {
@@ -114,7 +117,7 @@ function warpY(x: number, y: number): number {
 }
 
 /**
- * How far the shoreline of a Ditch wanders from the straight, in Tiles.
+ * How far the shoreline of a run of Water wanders from the straight, in Tiles.
  * Mirrors `shoreWander` in `public/fields.js`, which must stay identical or
  * the Lawn and the client disagree about which Tiles are grass.
  */
@@ -132,46 +135,51 @@ function water(into: number, beyond: number): number {
 }
 
 /**
- * Where a point stands on the Lawn: the Field that owns it, or -1 for a lane,
- * a bank or the water, and how far it lies inside the water. Mirrors
- * `placeAt` in `public/fields.js` exactly.
+ * Where a point stands on the Lawn: the Field that owns it, or -1 for a Path,
+ * a Street, a bank or the Water, and how far it lies inside the Water.
+ * Mirrors `placeAt` in `public/fields.js` exactly.
  */
-function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
-  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
+function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number; street: number } {
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, d0 = Infinity, d1 = Infinity;
+  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
   const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
-    if (d < d0) { d1 = d0; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; }
+    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d1 = d; second = k; }
   }
   const edge = (d1 - d0) * 0.5;
   let wet = -BRIDGE;
   const wander = shoreWander(x, y);
-  // Measure every ditch, even across a field boundary. Switching the nearest
-  // pair at a junction must not cut off the shoreline or its collision margin.
-  for (const [a, b] of DITCHES) {
+  // Measure every run of Water, even across a field boundary. Switching the
+  // nearest pair at a junction must not cut off the shoreline or its
+  // collision margin.
+  for (const [a, b] of WATERS) {
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
       if (k !== a && k !== b) third = Math.min(third, distances[k]);
     }
-    // Leave a dry lane before the third field, with rounded bank corners.
-    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    const shore = water(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
+    // Leave a dry Path before the third field, with rounded bank corners.
+    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - PATH - BANK;
+    const shore = water(WATER + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
     const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
     const span2 = (px - bx) ** 2 + (py - by) ** 2;
     const along = Math.sqrt(Math.max(0, span2 - across * across));
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
-  const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  const road = roadDistance(x, y, width, height) - ROAD_HALF_WIDTH;
-  wet = Math.min(wet, road);
-  return { field: road <= 0 || edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
+  const kerb = -ringDistance(x, y, width, height);
+  wet = Math.min(wet, kerb - STREET_HALF_WIDTH);
+  const seam = first < second ? `${first},${second}` : `${second},${first}`;
+  const street = Math.min(STREETS.has(seam) ? edge : Infinity, kerb);
+  const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
+    || treeEarthAt(x, y, width, height);
+  return { field: bare ? -1 : first, wet, street };
 }
 
 /** Water and trunks stop reported strokes, whatever the client says. */
@@ -181,19 +189,21 @@ function blocked(x: number, y: number): boolean {
 }
 
 /**
- * How far apart the Lawn reads the swath while it looks for water. A Ditch is
- * `2 * DITCH` Tiles wide, so a step this short can never stride over one.
+ * How far apart the Lawn reads the swath while it looks for water. A run of
+ * Water is `2 * WATER` Tiles wide, so a step this short can never stride over
+ * one.
  */
 const WATER_STEP = 0.75;
 
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
 
 /**
- * Which Field owns each Tile, or `NO_FIELD` for a lane, a bank or the water.
+ * Which Field owns each Tile, or `NO_FIELD` for a Path, a Street, a bank or
+ * the Water.
  *
  * It is the same answer `placeAt` gives, held as a table for the same reason
  * the Growth Rate is: the Lawn is read Tile by Tile, many times a second, and
- * `placeAt` measures nine seeds and four Ditches for every read. The Mow
+ * `placeAt` measures nine seeds and three runs of Water for every read. The Mow
  * Stroke used to pay that price per Tile to ask whether grass grows there; it
  * now reads one byte, and gets the Field the Tile belongs to for nothing —
  * which is how the Lawn knows which Fields to read for a finish.
@@ -1444,7 +1454,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
 
   /**
    * How far a Mower really gets along its swath: as far as it asked for, or
-   * as far as the near bank of a Ditch. A Mower cannot drive through water,
+   * as far as the near bank of the Water. A Mower cannot drive through water,
    * so neither can a client that says it did — the Lawn stops the swath at
    * the water's edge and sends that Mower the Lawn as the Lawn sees it.
    *
