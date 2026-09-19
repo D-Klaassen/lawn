@@ -8,7 +8,7 @@
     "predev": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees && npm run build:driving",
     "dev": "wrangler dev",
     "predeploy": "npm run build:score && npm run build:ball && npm run build:achievements && npm run build:trees && npm run build:driving",
-    "build:driving": "esbuild src/road.ts src/driving.ts --bundle --format=esm --outdir=public",
+    "build:driving": "esbuild src/road.ts src/driving.ts src/positions.ts src/mowing.ts --bundle --format=esm --outdir=public",
     "test:driving": "npm run build:driving && node scripts/check-driving.mjs",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
@@ -18,7 +18,9 @@
     "test:junctions": "node scripts/check-junctions.mjs",
     "test:map": "node scripts/check-map.mjs",
     "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
-    "test:trees": "npm run build:trees && node scripts/check-trees.mjs"
+    "test:trees": "npm run build:trees && node scripts/check-trees.mjs",
+    "test:positions": "npm run build:driving && node scripts/check-positions.mjs",
+    "test:mowing": "npm run build:driving && node scripts/check-mowing.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",

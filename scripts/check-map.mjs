@@ -19,13 +19,14 @@
  *
  *     node scripts/check-map.mjs [width] [height]
  */
+import { MOW_RADIUS, COLLISION_RADIUS } from '../public/mowing.js';
 import { FIELD_NAMES, FIELD_SLACK, placeAt, blocked } from '../public/fields.js';
 import { STREET_HALF_WIDTH } from '../public/road.js';
 
 const W = Number(process.argv[2] ?? 408);
 const H = Number(process.argv[3] ?? 272);
-const RADIUS = 2.6 * 0.85;   // COLLISION_RADIUS in the client
-const MOW = 2.6;             // MOW_RADIUS: a Mower cuts this far from itself
+const RADIUS = COLLISION_RADIUS;
+const MOW = MOW_RADIUS;
 
 const field = new Int8Array(W * H);
 const wet = new Float32Array(W * H);

@@ -1,6 +1,8 @@
 import { treeAt, treeEarthAt } from "./trees";
 import { ringDistance, STREET_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
+import { motion } from "./positions";
+import { MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from "./mowing";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -270,8 +272,6 @@ function bladeHeight(mownAt: number, regrow: number, now: number): number {
   const t = (age - COOLDOWN_SECONDS) / regrow;
   return 1 - (1 - t) * (1 - t);
 }
-/** Radius of one Mow Stroke, in Tiles. */
-const MOW_RADIUS = 2.6;
 
 
 /**
@@ -446,7 +446,7 @@ const SCORE_GAP_MS = 250;
  * and a missing `a` the older shape, for a tab open across a deploy.
  */
 type ClientMessage =
-  | { t: "mow"; x: number; y: number; a?: number; x1?: number; y1?: number }
+  | { t: "mow"; x: number; y: number; a?: number; vx?: number; vy?: number; seq?: number; x1?: number; y1?: number }
   /**
    * Where a Mower is and which way it points. A Mow Stroke now carries this,
    * so only a tab open across a deploy still sends it on its own.
@@ -770,6 +770,8 @@ export class Lawn extends DurableObject {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
       this.seed(ws, purse, x, y);
+      if (heading) this.report(ws, id, name, key, { x, y }, a, motion(message.vx, message.vy));
+      this.acceptPosition(ws, message, { x, y });
       return;
     }
 
@@ -812,7 +814,15 @@ export class Lawn extends DurableObject {
     // report as well, because it is the same movement. The Mower is shown
     // where the Lawn drove it to and not where the report said, so there is
     // nothing to pull back: `within` is for the older `pos` message only.
-    if (heading) this.report(ws, id, name, key, to, a);
+    const velocity = to.x === x && to.y === y ? motion(message.vx, message.vy) : { vx: 0, vy: 0 };
+    if (heading) this.report(ws, id, name, key, to, a, velocity);
+    this.acceptPosition(ws, message, to);
+  }
+
+  private acceptPosition(ws: WebSocket, message: Extract<ClientMessage, { t: "mow" }>, at: Place): void {
+    if (Number.isSafeInteger(message.seq) && message.seq! > 0) {
+      ws.send(JSON.stringify({ t: "accepted", seq: message.seq, x: at.x, y: at.y }));
+    }
   }
 
   /**
@@ -827,6 +837,7 @@ export class Lawn extends DurableObject {
     key: string,
     at: Place,
     a: number,
+    velocity?: { vx: number; vy: number },
   ): void {
     this.trackBallMower(ws, id, at);
     const held = this.scores.get(key);
@@ -842,7 +853,7 @@ export class Lawn extends DurableObject {
     this.broadcast(
       // `nm` is what this Mower is called and coloured by, and `n` is when
       // the report was made. They are different things with unlucky names.
-      JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, s, ac, n: Date.now() }),
+      JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, ...velocity, s, ac, n: Date.now() }),
       ws,
     );
     this.tell(ws, held);
@@ -930,7 +941,7 @@ export class Lawn extends DurableObject {
     const speed = Math.hypot(vx, vy);
     const scale = speed > MAX_SPEED ? MAX_SPEED / speed : 1;
     this.ballMowers.set(ws, { id, ...at, vx: vx * scale, vy: vy * scale, at: now });
-    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + MOW_RADIUS * 0.85) {
+    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + COLLISION_RADIUS) {
       this.ballTick = now;
       this.ballTimer = setInterval(() => this.tickBall(), 1000 / 30);
     }
@@ -1078,36 +1089,17 @@ export class Lawn extends DurableObject {
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
-    const minX = Math.max(0, Math.floor(Math.min(x0, x1) - MOW_RADIUS));
-    const maxX = Math.min(LAWN_WIDTH - 1, Math.ceil(Math.max(x0, x1) + MOW_RADIUS));
-    const minY = Math.max(0, Math.floor(Math.min(y0, y1) - MOW_RADIUS));
-    const maxY = Math.min(LAWN_HEIGHT - 1, Math.ceil(Math.max(y0, y1) + MOW_RADIUS));
-
-    const dx = x1 - x0;
-    const dy = y1 - y0;
-    const len2 = dx * dx + dy * dy;
-
     this.cutByField.fill(0);
     let blades = 0;
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const px = x + 0.5 - x0;
-        const py = y + 0.5 - y0;
-        const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
-        const ox = px - t * dx;
-        const oy = py - t * dy;
-        if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
-          const i = y * LAWN_WIDTH + x;
-          const field = FIELD_OF[i];
-          if (field !== NO_FIELD) {
-            const off = bladeHeight(this.mownAt[i], REGROW[i], now);
-            blades += off;
-            this.cutByField[field] += off;
-          }
-          this.mownAt[i] = now;
-        }
+    forEachMownTile(x0, y0, x1, y1, LAWN_WIDTH, LAWN_HEIGHT, MOW_RADIUS, (i) => {
+      const field = FIELD_OF[i];
+      if (field !== NO_FIELD) {
+        const off = bladeHeight(this.mownAt[i], REGROW[i], now);
+        blades += off;
+        this.cutByField[field] += off;
       }
-    }
+      this.mownAt[i] = now;
+    });
     return blades;
   }
 

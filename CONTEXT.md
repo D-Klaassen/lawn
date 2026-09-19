@@ -313,8 +313,8 @@ including other mowers based on their observed sideways travel. Marks last
 A moving mower 5–28 Tiles ahead on a Street gives a slipstream when its travel
 direction agrees with the follower's. The tow builds over 0.8 seconds and fades
 over 3 seconds after pulling out, giving the follower speed to pass. Stale,
-stationary, opposing, and side-by-side peers give no tow. Peer travel comes
-from position reports, so drifting needs no additional network messages.
+stationary, opposing, and side-by-side peers give no tow. Reports carry the actual travel vector after collisions, so drifting and
+stopping against a bank reach other players without extra incoming messages.
 
 Run `npm run test:driving` for movement and passing-clearance checks, and
 `npm run test:junctions` for client/server map agreement and water continuity.
@@ -357,7 +357,7 @@ a fresh Snapshot.
 This costs an honest Mower nothing. Its own client already holds it 2.2 Tiles
 from the water, and the Lawn stops only at the water itself, so the two
 never disagree. What it closes is the whole of the gain: the far bank stands
-6.8 Tiles from the near water's edge and a Mow Stroke reaches 2.6, so no
+6.8 Tiles from the near water's edge and a Mow Stroke reaches about 2.03, so no
 Mower cuts across Water, however its client is written.
 
 One hole stays open, and it is the one that was already there: a Mower the
@@ -389,8 +389,8 @@ change. It is a debounce, not a simulation step. See "What a report costs".
 
 ## Presence
 
-A Mow Stroke says which way the Mower points, so it is the position report as
-well. The server relays it and keeps nothing on disk, because a position has
+A Mow Stroke carries the position, heading and actual travel velocity, so it
+is the position report as well. The server relays it and keeps nothing on disk, because a position has
 no meaning after the Mower leaves. A client forgets a Mower it has not heard
 from for 4 seconds. Hibernation therefore costs almost nothing: a Lawn that
 wakes has forgotten where each Mower stands, and the next Mow Stroke says it
@@ -399,6 +399,25 @@ again.
 `{t:"pos"}` is the older message that carried a position on its own. The
 server still takes it, because a tab open across a deploy keeps sending it.
 Nothing writes it any more.
+
+`src/positions.ts` samples remote movement with 50 ms of interpolation delay
+and at most 150 ms of prediction. Small corrections ease over 60 ms; stale
+mowers stop predicting. The client samples peers before driving, so drawing,
+collisions and slipstream all use the same positions. Prediction respects
+banks, trees and map edges. Reports from older tabs fall back to measured
+travel, and histories are bounded while a tab is in the background.
+
+Each new report has a sequence number. The server replies with the accepted
+position, including the first report. The driver applies any difference while
+preserving movement since that report; corrections already applied are
+subtracted from later replies for reports still in flight. This prevents a
+speed or water limit from correcting everyone except the driver. Reconnecting
+clears pending reports and peer history. These are bounded estimates: network
+latency and abrupt turns can still require corrections; collisions remain
+client-simulated rather than server-authoritative.
+
+`npm run test:positions` checks prediction, jitter, drafting, corrections and
+the server's speed limit.
 
 ## What a report costs
 
@@ -411,7 +430,7 @@ choice:
 - **One report, not two.** A Mow Stroke and a position say the same thing
   about the same movement. They were two messages and are now one.
 - **A report every 100 ms.** The swath the Lawn cuts between two reports is a
-  straight one, about 1.3 Tiles long against a Mower 5 Tiles wide, so the
+  straight one, up to 2.5 Tiles long against a Mower 5 Tiles wide, so the
   grass still comes off where the Mower drove. Your own Lawn is cut every
   frame, so nothing about the driving reads slower.
 - **A Mower that stands still says so every 500 ms.** A report that repeats
@@ -451,11 +470,10 @@ the two. Below `BUMP_SPEED` nothing happens at all. Above it there is dust and
 a shake of the camera. Only above `STUN_SPEED`, which is about half of the
 speed a Mower can drive, do the controls go.
 
-The velocity of the other Mower comes from the two reports it is drawn
-between, because a report says where a Mower was and not how fast it drove.
-It is the way of the travel and not the way of the nose, so a Mower that is
-pushed sideways is measured by where it really goes. A Mower with no report
-to drive to counts as standing still.
+The velocity of the other Mower comes from its reported travel vector, capped
+at the shared speed ceiling. This follows actual movement rather than the
+nose or throttle. A brief gap between reports preserves travel for drafting
+and collision checks; once prediction expires the Mower counts as stopped.
 
 Then a Stun buys `STUN_GRACE_MS` of Grace. Without it, one Mower parks beside
 another and rams it again the moment it comes round, and the Mower under the
@@ -979,18 +997,23 @@ standing grass is deeper than it was. The one on the screen that is brightest
 should be the one that has been cut: that is what a mown lawn looks like, and
 it is the only thing that tells a Mower where it has been.
 
-## The deck should look like it could cut the swath
+## The cut fits under the deck
 
-A Mow Stroke is `MOW_RADIUS` and the swath is therefore 5.2 Tiles wide. The
-deck was 3.5, so a Mower left a swath half again its own width behind it and
-plainly did not look like the thing that cut it.
+`src/mowing.ts` shares the deck dimensions, blade radius and tile traversal
+between the rendered model, optimistic client cuts and server scoring. The
+blade radius is about 2.03 Tiles, inset inside the actual faceted housing,
+including its shorter rear edge. Collision clearance stays at 2.21 Tiles;
+shrinking the cut must not change passing or ball contact distances.
 
-The deck is now as wide as the Mower is allowed to be — `COLLISION_RADIUS` is
-0.85 of `MOWER_SCALE`, so the body is 4.4 Tiles across. It cannot be made wider
-without either making it clip the things it is not allowed to touch, or moving
-`COLLISION_RADIUS`, which is what every gap on the Lawn was measured against.
-The blades still overhang it by a third of a Tile either side, which is what a
-deck does.
+Grass height is sampled at each blade's root. Randomly displaced samples and
+extra ground-height blur made grass appear cut beyond the deck, especially
+in front. Bilinear tile sampling still softens the edge, so the boundary has
+tile-resolution limits. Grass depth is measured just beyond the leading edge
+of the housing, including when reversing.
+
+`npm run test:mowing` checks containment against vertices from `mowerMesh`,
+client/server cut and score agreement, and split strokes. The map check uses
+the same blade radius and asserts that every field remains completable.
 
 ## The board wears the medals
 
