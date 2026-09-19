@@ -7,12 +7,14 @@
  *
  *     node scripts/check-map.mjs [width] [height]
  */
-import { FIELD_NAMES, placeAt, blocked } from '../public/fields.js';
+import assert from 'node:assert/strict';
+import { MOW_RADIUS, COLLISION_RADIUS } from '../public/mowing.js';
+import { FIELD_NAMES, FIELD_SLACK, placeAt, blocked } from '../public/fields.js';
 
 const W = Number(process.argv[2] ?? 408);
 const H = Number(process.argv[3] ?? 272);
-const RADIUS = 2.6 * 0.85;   // COLLISION_RADIUS in the client
-const MOW = 2.6;             // MOW_RADIUS: a Mower cuts this far from itself
+const RADIUS = COLLISION_RADIUS;
+const MOW = MOW_RADIUS;
 
 const field = new Int8Array(W * H);
 const wet = new Float32Array(W * H);
@@ -82,6 +84,7 @@ console.log(`  dry ground a Mower cannot reach: ${cutOff} Tiles`);
 for (const [i, name] of FIELD_NAMES.entries()) {
   const { tiles, reached } = counts[i];
   const share = tiles ? (100 * reached / tiles).toFixed(1) : '0.0';
+  assert.ok(reached >= tiles * (1 - FIELD_SLACK), `${name} must remain completable with the blade radius`);
   console.log(`  ${name.padEnd(18)} ${String(tiles).padStart(6)} Tiles, ${share}% mowable`);
 }
 
