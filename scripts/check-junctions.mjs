@@ -31,6 +31,7 @@ for (const [width, height] of [[408, 272], [288, 192]]) {
       assert.equal(client.field, authority.field);
       assert.equal(client.wet, authority.wet);
       assert.equal(client.street, authority.street);
+      assert.equal(client.edge, authority.edge);
       // A centimetre-sized step must not jump across an invisible bank.
       for (const [dx, dy] of [[0.01, 0], [0, 0.01]]) {
         const next = placeAt(x + dx, y + dy, width, height);

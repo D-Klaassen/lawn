@@ -141,8 +141,8 @@ function water(into: number, beyond: number): number {
  * a Street, a bank or the Water, and how far it lies inside the Water.
  * Mirrors `placeAt` in `public/fields.js` exactly.
  */
-function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number; street: number } {
-  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE };
+function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number; street: number; edge: number } {
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE, edge: 0 };
   const px = warpX(x, y), py = warpY(x, y);
   let first = 0, second = 0, third = 0;
   let d0 = Infinity, d1 = Infinity, d2 = Infinity;
@@ -189,7 +189,7 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
     || treeEarthAt(x, y, width, height);
-  return { field: bare ? -1 : first, wet, street };
+  return { field: bare ? -1 : first, wet, street, edge };
 }
 
 /** Water and trunks stop reported strokes, whatever the client says. */

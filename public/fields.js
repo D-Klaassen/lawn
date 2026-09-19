@@ -95,11 +95,12 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
  *   is negative on a Street and past one, so it is the room a Field has left
  *   before a Street would cut it.
  *
- * `edge` is half the difference between the two nearest seeds. It is about
- * the distance to the seam in Tiles, which is what the widths above measure.
+ * - `edge` is half the difference between the two nearest seeds. It is about
+ *   the distance to the seam in Tiles, which is what the widths above
+ *   measure, and it is what draws every Path.
  */
 export function placeAt(x, y, width, height) {
-  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE };
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE, edge: 0 };
   const px = warpX(x, y), py = warpY(x, y);
   // The three nearest seeds, not the two. The third is what says where a seam
   // ends, and a Street needs that as much as the Water does.
@@ -171,7 +172,7 @@ export function placeAt(x, y, width, height) {
   const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
     || treeEarthAt(x, y, width, height);
-  return { field: bare ? -1 : first, wet, street };
+  return { field: bare ? -1 : first, wet, street, edge };
 }
 
 /** How much of a Street covers a point, from 0 to 1. */
@@ -327,13 +328,18 @@ export function buildMapImage(width, height, done = [], scale = 2) {
 }
 
 /**
- * The map, in the shader's own words. It is built from the table above, so
- * the ground a Mower drives on and the ground it sees are one map and cannot
- * drift apart. Only the fringe is the shader's own: a Path reads better with
- * a broken edge, and the water does not, because the water is where the
- * Mower stops.
+ * Where a point stands, in the shader's own words: everything `placeAt`
+ * needs and nothing else.
+ *
+ * It is built from the tables above, so the widths and the seams cannot drift
+ * from the ones the Lawn uses. The working is not built from anything — it is
+ * written twice, here and in JavaScript, and two hands write two answers.
+ * `public/check-shader.html` is what holds them to one: it runs this very
+ * string on the GPU and reads it against `placeAt` point by point. It is
+ * separated out so that check can compile it without the rest of the shader,
+ * which needs a lawn's worth of bindings to say anything at all.
  */
-export const MAP_WGSL = `
+export const PLACE_WGSL = `
 ${RING_WGSL}
 const PATH = ${PATH.toFixed(3)};
 const WATER = ${WATER.toFixed(3)};
@@ -421,6 +427,15 @@ fn placeAt(p : vec2f) -> vec4f {
   return vec4f(edge, wet, f32(first), street);
 }
 
+`;
+
+/**
+ * The map, in the shader's own words. Only the fringe is the shader's own: a
+ * Path reads better with a broken edge, and the water does not, because the
+ * water is where the Mower stops.
+ */
+export const MAP_WGSL = `
+${PLACE_WGSL}
 /** 1 on the grass, 0 on a Path, a Street, a bank or the Water. The verge is soft. */
 fn pathGrass(p : vec2f) -> f32 {
   let place = placeAt(p);

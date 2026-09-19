@@ -145,11 +145,26 @@ Lawn, and the Fields keep their names and their places.
 
 There are three readers of that table, and only one writer of it. The client
 and the minimap import `public/fields.js`. The shader is handed its own copy
-of the map as WGSL, built from the same table by that same file, so the
-ground a Mower drives on and the ground it sees cannot drift apart. The Lawn
+of the map as WGSL, built from the same table by that same file. The Lawn
 keeps a mirror in `src/index.ts`, for the same reason it mirrors the Growth
 Rate: it counts the blades, so it has to know which Tiles are grass. That one
 copy must stay identical.
+
+Being built from the same table is what keeps the widths and the seams from
+drifting. It is not what keeps the answers together, and it was easy to read
+it as though it were. The working — nine seeds measured, three kept, eight
+seams weighed — is written twice over, once in JavaScript and once in WGSL,
+and two hands write two answers. Two checks hold the three copies to one:
+`scripts/check-junctions.mjs` reads the Lawn against the client over a third
+of a million points, and `public/check-shader.html` reads the shader against
+the client over the same ground, by compiling `PLACE_WGSL` and running it on
+the GPU. The second needs a GPU, so it is a page and not a script: serve the
+site and open `/check-shader.html`.
+
+Both were written against a fault, not against a hope. The shader check was
+shown three of them — a Street that never ends, a warp out by one part in
+five hundred, and a shader naming the second-nearest seed — and it named all
+three before it was believed.
 
 `node scripts/check-map.mjs` reads the map the way a Mower does and says
 whether it holds together: how much of the Lawn is grass, Path, Street and
@@ -1085,6 +1100,9 @@ both, and the minimap is measured against the height as well as the width.
 - `src/road.ts` — the ring Street at the kerb, and the only part of the map
   that is not a seam.
 - `scripts/check-map.mjs` — reads that map and says whether it holds together.
+- `public/check-shader.html` — the same proof for the third copy: it compiles
+  `PLACE_WGSL` and runs it on the GPU against the client's `placeAt`. A GPU is
+  not something node has, so this one is opened and not run.
 - `scripts/check-junctions.mjs` — walks a third of a million points and proves
   the Lawn's copy of the map answers exactly what the client's does. It is the
   only thing that does, so it is wired into `package.json` as `test:junctions`;
