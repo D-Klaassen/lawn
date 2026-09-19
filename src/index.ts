@@ -106,7 +106,7 @@ const BANK = 1.6;
 const BRIDGE = 6;
 /** Mirrors `SEAMS` in `public/fields.js`: the seams that carry Water, and the Streets. */
 const WATERS = [[1, 2], [5, 6], [7, 8]];
-const STREETS = new Set(["0,4", "0,5", "1,5", "1,6", "2,6", "2,7", "3,7", "3,8"]);
+const STREETS = [[0, 4], [0, 5], [1, 5], [1, 6], [2, 6], [2, 7], [3, 7], [3, 8]];
 const SHORE_RADIUS = 1.2;
 
 function warpX(x: number, y: number): number {
@@ -142,16 +142,20 @@ function water(into: number, beyond: number): number {
 function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number; street: number } {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
+  let first = 0, second = 0, third = 0;
+  let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   const edge = (d1 - d0) * 0.5;
+  const beside = (a: number, b: number) =>
+    (first !== a && first !== b ? d0 : (second !== a && second !== b ? d1 : d2));
   let wet = -BRIDGE;
   const wander = shoreWander(x, y);
   // Measure every run of Water, even across a field boundary. Switching the
@@ -173,9 +177,13 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
   const kerb = -ringDistance(x, y, width, height);
-  wet = Math.min(wet, kerb - STREET_HALF_WIDTH);
-  const seam = first < second ? `${first},${second}` : `${second},${first}`;
-  const street = Math.min(STREETS.has(seam) ? edge : Infinity, kerb);
+  let street = kerb;
+  for (const [a, b] of STREETS) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    const past = Math.max(0, (Math.max(distances[a], distances[b]) - beside(a, b)) * 0.5);
+    street = Math.min(street, Math.hypot(across, past));
+  }
+  wet = Math.min(wet, street - STREET_HALF_WIDTH);
   const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
     || treeEarthAt(x, y, width, height);

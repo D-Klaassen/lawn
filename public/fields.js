@@ -66,8 +66,6 @@ export const SEAMS = {
   '1,2': 'water', '5,6': 'water', '7,8': 'water',
 };
 
-/** The name of the seam between two Fields, the lower Field first. */
-function seamOf(a, b) { return a < b ? `${a},${b}` : `${b},${a}`; }
 function seamsOfKind(kind) {
   return Object.keys(SEAMS).filter(key => SEAMS[key] === kind).map(key => key.split(',').map(Number));
 }
@@ -103,16 +101,22 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
 export function placeAt(x, y, width, height) {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
+  // The three nearest seeds, not the two. The third is what says where a seam
+  // ends, and a Street needs that as much as the Water does.
+  let first = 0, second = 0, third = 0;
+  let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   const distances = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   const edge = (d1 - d0) * 0.5;
+  /** The nearest seed that is neither of these two. */
+  const beside = (a, b) => (first !== a && first !== b ? d0 : (second !== a && second !== b ? d1 : d2));
   let wet = -BRIDGE;
   // One wander for the point, not one per run of Water: it depends on where
   // the point is and not on which seam is being measured, and `placeAt` is
@@ -140,16 +144,30 @@ export function placeAt(x, y, width, height) {
   // and is negative on the ring and past it, so the kerb is where a Field
   // stops and the verge begins.
   const kerb = -ringDistance(x, y, width, height);
-  // Nothing wet lies on the ring or past it. The ring alone does this, and
-  // not the seam below: the ring is a smooth function of the point and a seam
-  // is not, so clamping on a seam would put a step in the shoreline where the
-  // nearest pair changes. No run of Water reaches a Street seam anyway — it
-  // is already tapered off before the junction — and `scripts/check-map.mjs`
-  // is what holds us to that.
-  wet = Math.min(wet, kerb - STREET_HALF_WIDTH);
-  // How far the point is from the nearest Street, measured inwards: the seam
-  // when this seam carries one, and otherwise the kerb.
-  const street = Math.min(SEAMS[seamOf(first, second)] === 'street' ? edge : Infinity, kerb);
+  // How far the point is from the nearest Street.
+  //
+  // It is measured against the seam itself and not against the nearest pair
+  // of seeds. Asking "does my nearest pair carry a Street" is a yes or a no,
+  // and the map read it once per point: the gravel stopped dead along the
+  // line where the second-nearest seed changes, which is a hard edge through
+  // open ground and a Mower that loses the Street mid-corner.
+  //
+  // A seam is live while its own two seeds are nearer than any third. Past
+  // the point where they are not — the junction where three Fields meet —
+  // the distance is taken to that junction instead of to the line, so a
+  // Street that ends rounds off over its own width. Before the junction the
+  // answer is the distance to the seam, exactly as it was.
+  let street = kerb;
+  for (const [a, b] of STREETS) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    const past = Math.max(0, (Math.max(distances[a], distances[b]) - beside(a, b)) * 0.5);
+    street = Math.min(street, Math.hypot(across, past));
+  }
+  // Nothing wet lies on a Street, or past the ring. This is safe only because
+  // the answer above is a real distance and not a choice between two: clamped
+  // on the old yes-or-no test, the shoreline gained a step where the
+  // second-nearest seed changes — an invisible bank a Mower stopped at.
+  wet = Math.min(wet, street - STREET_HALF_WIDTH);
   const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
   const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
     || treeEarthAt(x, y, width, height);
@@ -353,13 +371,16 @@ fn placeAt(p : vec2f) -> vec4f {
   var distances : array<f32, SEED_COUNT>;
   var first = 0;
   var second = 0;
+  var third = 0;
   var d0 = 1e20;
   var d1 = 1e20;
+  var d2 = 1e20;
   for (var k = 0; k < SEED_COUNT; k = k + 1) {
     let d = length(q - seeds[k] * C.misc2.xy);
     distances[k] = d;
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   let edge = (d1 - d0) * 0.5;
   var wet = -BRIDGE;
@@ -380,16 +401,23 @@ fn placeAt(p : vec2f) -> vec4f {
     let along = sqrt(max(0.0, dot(offset, offset) - across * across));
     wet = max(wet, waterDepth(shore, along - BRIDGE + wander));
   }
-  let lo = min(first, second);
-  let hi = max(first, second);
-  let streets = array<vec2i, ${STREETS.length}>(${STREETS.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
-  var seam = 1e20;
-  for (var i = 0; i < ${STREETS.length}; i = i + 1) {
-    if (streets[i].x == lo && streets[i].y == hi) { seam = edge; }
-  }
   let kerb = -ringDistance(p);
-  wet = min(wet, kerb - STREET_HALF_WIDTH);
-  let street = min(seam, kerb);
+  // The same answer as the Street loop in this file: measured against the
+  // seam itself, so a Street that ends rounds off instead of stopping dead
+  // along the line where the second-nearest seed changes.
+  let streets = array<vec2i, ${STREETS.length}>(${STREETS.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
+  var street = kerb;
+  for (var i = 0; i < ${STREETS.length}; i = i + 1) {
+    let a = streets[i].x;
+    let b = streets[i].y;
+    var beside = d2;
+    if (first != a && first != b) { beside = d0; }
+    else if (second != a && second != b) { beside = d1; }
+    let across = abs(distances[a] - distances[b]) * 0.5;
+    let past = max(0.0, (max(distances[a], distances[b]) - beside) * 0.5);
+    street = min(street, length(vec2f(across, past)));
+  }
+  wet = min(wet, street - STREET_HALF_WIDTH);
   return vec4f(edge, wet, f32(first), street);
 }
 

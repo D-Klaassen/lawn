@@ -110,11 +110,13 @@ It is one wander per point and not one per run of Water: it depends on where
 the point is and not on which seam is being measured, and `placeAt` is read
 once per Tile of the Lawn on both sides.
 
-The shoreline is clamped on the ring and never on a seam. The ring is a smooth
-function of the point and a seam is not, so clamping the Water on a seam put a
-step in the shoreline where the nearest pair changes — an invisible bank a
-Mower stopped at. `scripts/check-junctions.mjs` is what found it, and the rule
-that keeps it out is that no run of Water may reach a Street at all.
+The shoreline is clamped on the Street, and that is only safe because the
+Street answers with a distance. It first answered with a choice — "does my
+nearest pair of seeds carry a Street, yes or no" — and a choice is not a
+smooth function of the point: the answer changed along the line where the
+second-nearest seed changes, which put a step in the shoreline there, an
+invisible bank a Mower stopped at. `scripts/check-junctions.mjs` is what found
+it.
 
 It goes in `placeAt` and not in the shading, so the water a Mower sees is the
 water it cannot drive into. Softening only the drawn edge would have been half
@@ -258,6 +260,27 @@ and the grass is the only one of the three that touches the driving.
 
 A camera that moves on its own is what reduced motion asks about, so that one
 keeps the camera nailed and the bodies flat.
+
+## A Street is measured, not chosen
+
+The first Street read the map by asking whether the nearest pair of seeds
+carried one. That is a yes or a no, and it is why the gravel used to stop dead
+in the middle of open ground: the answer flips along the line where the
+second-nearest seed changes, so the Street ended on a straight hard edge with
+grass and earth carrying on either side of it, and a Mower lost its speed
+mid-corner for no reason it could see.
+
+A Street is measured now. Each seam that carries one is measured on its own:
+`across` is the distance to the seam, and the junction where a third Field
+comes nearer is where the seam ends. Before that junction the answer is
+`across`, exactly as it was. Past it, the answer is the distance to the
+junction itself, so a Street that ends rounds off over its own width instead
+of being cut with a knife. The map takes the nearest of those and the kerb.
+
+That is also what lets the Water be clamped on the Street again, which is what
+the ring alone used to do: a distance can be clamped on, and a choice cannot.
+It costs a third seed in the main loop and eight cheap sums, and it buys every
+edge on the map being one a Mower can see coming.
 
 ## The Streets and overtaking
 
