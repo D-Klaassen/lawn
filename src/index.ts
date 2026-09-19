@@ -2,6 +2,7 @@ import { treeAt, treeEarthAt } from "./trees";
 import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
 import { motion } from "./positions";
+import { MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from "./mowing";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -253,8 +254,6 @@ function bladeHeight(mownAt: number, regrow: number, now: number): number {
   const t = (age - COOLDOWN_SECONDS) / regrow;
   return 1 - (1 - t) * (1 - t);
 }
-/** Radius of one Mow Stroke, in Tiles. */
-const MOW_RADIUS = 2.6;
 
 
 /**
@@ -924,7 +923,7 @@ export class Lawn extends DurableObject {
     const speed = Math.hypot(vx, vy);
     const scale = speed > MAX_SPEED ? MAX_SPEED / speed : 1;
     this.ballMowers.set(ws, { id, ...at, vx: vx * scale, vy: vy * scale, at: now });
-    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + MOW_RADIUS * 0.85) {
+    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + COLLISION_RADIUS) {
       this.ballTick = now;
       this.ballTimer = setInterval(() => this.tickBall(), 1000 / 30);
     }
@@ -1072,36 +1071,17 @@ export class Lawn extends DurableObject {
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
-    const minX = Math.max(0, Math.floor(Math.min(x0, x1) - MOW_RADIUS));
-    const maxX = Math.min(LAWN_WIDTH - 1, Math.ceil(Math.max(x0, x1) + MOW_RADIUS));
-    const minY = Math.max(0, Math.floor(Math.min(y0, y1) - MOW_RADIUS));
-    const maxY = Math.min(LAWN_HEIGHT - 1, Math.ceil(Math.max(y0, y1) + MOW_RADIUS));
-
-    const dx = x1 - x0;
-    const dy = y1 - y0;
-    const len2 = dx * dx + dy * dy;
-
     this.cutByField.fill(0);
     let blades = 0;
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const px = x + 0.5 - x0;
-        const py = y + 0.5 - y0;
-        const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
-        const ox = px - t * dx;
-        const oy = py - t * dy;
-        if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
-          const i = y * LAWN_WIDTH + x;
-          const field = FIELD_OF[i];
-          if (field !== NO_FIELD) {
-            const off = bladeHeight(this.mownAt[i], REGROW[i], now);
-            blades += off;
-            this.cutByField[field] += off;
-          }
-          this.mownAt[i] = now;
-        }
+    forEachMownTile(x0, y0, x1, y1, LAWN_WIDTH, LAWN_HEIGHT, MOW_RADIUS, (i) => {
+      const field = FIELD_OF[i];
+      if (field !== NO_FIELD) {
+        const off = bladeHeight(this.mownAt[i], REGROW[i], now);
+        blades += off;
+        this.cutByField[field] += off;
       }
-    }
+      this.mownAt[i] = now;
+    });
     return blades;
   }
 

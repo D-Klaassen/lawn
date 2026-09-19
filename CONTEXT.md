@@ -298,7 +298,7 @@ a fresh Snapshot.
 This costs an honest Mower nothing. Its own client already holds it 2.2 Tiles
 from the water, and the Lawn stops only at the water itself, so the two
 never disagree. What it closes is the whole of the gain: the far bank stands
-6.8 Tiles from the near water's edge and a Mow Stroke reaches 2.6, so no
+6.8 Tiles from the near water's edge and a Mow Stroke reaches about 2.03, so no
 Mower cuts across a Ditch, however its client is written.
 
 One hole stays open, and it is the one that was already there: a Mower the
@@ -938,18 +938,23 @@ standing grass is deeper than it was. The one on the screen that is brightest
 should be the one that has been cut: that is what a mown lawn looks like, and
 it is the only thing that tells a Mower where it has been.
 
-## The deck should look like it could cut the swath
+## The cut fits under the deck
 
-A Mow Stroke is `MOW_RADIUS` and the swath is therefore 5.2 Tiles wide. The
-deck was 3.5, so a Mower left a swath half again its own width behind it and
-plainly did not look like the thing that cut it.
+`src/mowing.ts` shares the deck dimensions, blade radius and tile traversal
+between the rendered model, optimistic client cuts and server scoring. The
+blade radius is about 2.03 Tiles, inset inside the actual faceted housing,
+including its shorter rear edge. Collision clearance stays at 2.21 Tiles;
+shrinking the cut must not change passing or ball contact distances.
 
-The deck is now as wide as the Mower is allowed to be — `COLLISION_RADIUS` is
-0.85 of `MOWER_SCALE`, so the body is 4.4 Tiles across. It cannot be made wider
-without either making it clip the things it is not allowed to touch, or moving
-`COLLISION_RADIUS`, which is what every gap on the Lawn was measured against.
-The blades still overhang it by a third of a Tile either side, which is what a
-deck does.
+Grass height is sampled at each blade's root. Randomly displaced samples and
+extra ground-height blur made grass appear cut beyond the deck, especially
+in front. Bilinear tile sampling still softens the edge, so the boundary has
+tile-resolution limits. Grass depth is measured just beyond the leading edge
+of the housing, including when reversing.
+
+`npm run test:mowing` checks containment against vertices from `mowerMesh`,
+client/server cut and score agreement, and split strokes. The map check uses
+the same blade radius and asserts that every field remains completable.
 
 ## The board wears the medals
 
