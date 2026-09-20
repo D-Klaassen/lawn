@@ -832,7 +832,7 @@ import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { TREES, treeMesh } from '/trees.js';
 import { roadAt } from '/road.js';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
-import { stepDrive, slipstream, ROAD_SPEED } from '/driving.js';
+import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
 import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
@@ -1091,7 +1091,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) savePosition();
 });
 
-const MAX_V = ROAD_SPEED;
+const MAX_V = STREET_SPEED;
 let touchBrake = false;
 /**
  * How a Mower wears its weight. A machine under power lifts its nose, a
