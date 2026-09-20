@@ -834,7 +834,7 @@ import { roadAt } from '/road.js';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
 import { stepDrive, slipstream, ROAD_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, DITCHES, BRIDGE } from '/fields.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 /**
  * A Field has been finished. The tracker says so in the corner, but the
@@ -3714,7 +3714,7 @@ function drawWheelWake(cw, ch, dpr) {
         const grass = fieldAt(x, y, W, H) >= 0;
         const px = x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
         const py = y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
-        const bridge = DITCHES.some(([a, b]) => Math.hypot(
+        const bridge = WATERS.some(([a, b]) => Math.hypot(
           px - (SEEDS[a][0] + SEEDS[b][0]) * W / 2,
           py - (SEEDS[a][1] + SEEDS[b][1]) * H / 2) < BRIDGE + 2.6);
         if (!bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
