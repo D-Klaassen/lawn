@@ -775,8 +775,9 @@ held, never assigned over it. Then a threshold that is lowered awards the
 Achievement to everyone who already deserves it, and a threshold that is raised
 takes it from nobody.
 
-There are three things the Lawn counts, and they only ever grow: the blades
-(which is the Score), the Tiles driven, and the Bumps. The blades are split by
+There are four things the Lawn counts, and they only ever grow: the blades
+(which is the Score), the Tiles driven, the Bumps, and the blades cut while
+drifting. The blades are split by
 Field on the way past, which costs the Mow Stroke nothing — it has to know
 which Tiles are grass to count them at all, and the table that says so now names
 the Field in the same byte. That table replaced a `placeAt` call per Tile per
@@ -825,6 +826,20 @@ ram lower than the client does and `BUMP_CLOSING` is half of the client's
 `STUN_SPEED`. A genuine Bump the Lawn happens not to see is a Bump nobody is
 told about, and the ladder climbs a little slower than the Stars on the screen
 do. The ladders are short for that reason.
+
+A drift is a third hole, and a different shape from the other two: the Lawn
+never runs the Mower's own physics, so it never sees a slide the way it sees a
+Bump's closing speed, and there is nothing here to relay on trust the way a
+daze is. So the Lawn reads the shape a slide leaves on the ground instead. Two
+Mow Strokes taken back to back give a heading each, worked out from the ground
+actually covered and not from anything the Mower says about its own wheels; a
+slide swings that heading round faster than steering alone does, so a sharp
+bend between them, taken above `DRIFT_SPEED`, is read as a drift and credited
+to `g`. It is a shape a hard corner can also leave, so this counts some
+cornering that was never a slide at all — a smaller hole than the other two,
+because nothing but a ladder of stars rides on it, and closing it all the way
+would cost the Lawn a copy of the client's own tyre physics for a thing that
+changes no Score.
 
 An Emote cannot be made honest at all, so nothing is hung on one.
 
@@ -885,13 +900,14 @@ and it is what the address count is made of. Nothing on the screen uses it.
 
 ## The window shows the rung you are on
 
-Twenty-two Achievements is twenty-two lines, and twenty of them say nothing a
+Twenty-six Achievements is twenty-six lines, and most of them say nothing a
 Mower can act on. "Cut a million blades" is not a thing to read while you are
 working on the first thousand: it is grey text burying the two lines that mean
 something today.
 
-So a ladder — the blades, the Tiles driven, the Bumps — gives up the rungs it
-has climbed and then the one being climbed, with a bar and a count, and stops.
+So a ladder — the blades, the Tiles driven, the Bumps, the blades cut while
+drifting — gives up the rungs it has climbed and then the one being climbed,
+with a bar and a count, and stops.
 Nothing above that is drawn until it is next.
 
 The nine Fields are the exception, because they are a set and not a ladder:
@@ -930,8 +946,8 @@ Measured, by how tall a window has to be before the window stops scrolling:
 
 The worst of it is three rungs climbed on two ladders and two on the third,
 which wants a desktop window 780 px tall. A phone fits every one of them. Below
-that a window scrolls, and that is the honest cost of twenty-two Achievements
-as twenty-two cards with every won one still standing. Showing only the highest
+that a window scrolls, and that is the honest cost of twenty-six Achievements
+as twenty-six cards with every won one still standing. Showing only the highest
 rung climbed on each ladder would cap it at eight cards and fit anywhere; it is
 not done because a card you won is a card worth keeping on the shelf.
 
@@ -1049,7 +1065,7 @@ be the one place that lags a report behind the card.
 
 The star is a chunky one — its inner points stand at 55% of the outer radius
 rather than the usual 38% — because a star of ordinary sharpness has no width
-at its waist to carry two digits, and twenty-two of them can be earned. The
+at its waist to carry two digits, and twenty-six of them can be earned. The
 slot stays when a Mower has earned nothing, so the names stand in one column
 whatever anybody holds.
 

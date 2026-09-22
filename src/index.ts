@@ -401,6 +401,24 @@ const BUMP_CLOSING = 3;
 /** How stale a report may be and still say where a Mower was for a Bump. */
 const BUMP_STALE_MS = 1000;
 /**
+ * How fast a Mower must be driving, in Tiles a second, before a sharp bend in
+ * its own swath counts as a drift and not a Mower that has simply stopped.
+ * The client will not start a slide under `me.v > 7` either, so this asks
+ * for a little less: the Lawn reads the speed as an average across a whole
+ * Mow Stroke, which blurs a true peak down.
+ */
+const DRIFT_SPEED = 6;
+/**
+ * How far one Mow Stroke's heading may bend from the last one's, in radians,
+ * before it counts as a drift and not an ordinary corner. The Lawn never sees
+ * the tyres, only the swath they left, so a drift here is a sharp turn taken
+ * at speed — the shape a slide leaves on the ground — and not the client's
+ * word for what its own wheels were doing.
+ */
+const DRIFT_TURN = 0.5;
+/** How long a gap between two Mow Strokes may be and still be one movement, and not two unrelated ones. */
+const DRIFT_STALE_MS = 1000;
+/**
  * Notes the Lawn keeps about what has lately happened on it, and how old one
  * may be and still be worth telling a Mower that has just arrived.
  *
@@ -504,6 +522,8 @@ interface Score {
   d?: number;
   /** Bumps the Lawn saw it in. */
   b?: number;
+  /** Blades it took off while a Mow Stroke said it was drifting. */
+  g?: number;
 }
 
 /**
@@ -523,6 +543,7 @@ function tallyOf(score: Score): Tally {
     q: score.q ?? emptyTally().q,
     d: score.d ?? 0,
     b: score.b ?? 0,
+    g: score.g ?? 0,
   };
 }
 
@@ -567,6 +588,8 @@ export class Lawn extends DurableObject {
    * Mower the Lawn has lost says where it starts and cuts nothing.
    */
   private places = new WeakMap<WebSocket, Place>();
+  /** The heading and moment of a Mower's last Mow Stroke, for `sawDrift`. */
+  private lastHeading = new WeakMap<WebSocket, { dx: number; dy: number; at: number }>();
   /**
    * How much travel each Mower has left, by Mower Key and not by socket.
    * Windows are free and hands are not, so ten tabs on one Key drive one
@@ -790,7 +813,8 @@ export class Lawn extends DurableObject {
       // client that claims a mile gets as far as its travel allows, and the
       // ladder is measured on the near end of that.
       const drove = Math.hypot(to.x - from.x, to.y - from.y);
-      if (key) this.credit(ws, key, name, blades, drove);
+      const drifted = this.sawDrift(ws, from, to, drove);
+      if (key) this.credit(ws, key, name, blades, drove, drifted);
       // A Field can only be finished by grass coming off it, so this is the
       // one moment worth looking.
       if (blades > 0) this.watchFields();
@@ -1105,9 +1129,10 @@ export class Lawn extends DurableObject {
 
   /**
    * Add one Mow Stroke to what the Lawn holds for this Mower: the blades it
-   * took off, and the Tiles it drove.
+   * took off, the Tiles it drove, and, on the Mower's own word, the blades
+   * that came off while its tyres were sliding.
    *
-   * All three grow and none of them ever falls, which is what lets an
+   * All of them grow and none of them ever falls, which is what lets an
    * Achievement be for ever. The record is the one the map holds, so it is
    * changed in place and not rebuilt: a Score that is rebuilt is a Score that
    * silently drops the fields a later version added.
@@ -1118,10 +1143,12 @@ export class Lawn extends DurableObject {
     name: string,
     blades: number,
     drove: number,
+    drifting: boolean,
   ): void {
     const score = this.scores.get(key) ?? { n: name, c: 0 };
     score.c += blades;
     score.d = tidy((score.d ?? 0) + drove);
+    if (drifting && blades > 0) score.g = (score.g ?? 0) + blades;
     // The finishes are put on the record even when there are none, so that
     // reading it never has to build them: a Mower reports ten times a second,
     // and a Tally built afresh each time is throwaway arrays ten times a
@@ -1241,6 +1268,38 @@ export class Lawn extends DurableObject {
   }
 
   /**
+   * Whether one Mow Stroke bent sharply enough off the last one, at speed, to
+   * be a drift and not an ordinary corner.
+   *
+   * The Lawn never runs the Mower's own physics and so never sees a slide for
+   * itself the way it sees a swath. What it can see is the shape the swath
+   * left: a slide swings the Mower's heading away from where it was pointed a
+   * moment before, faster than steering alone turns it, and it does that
+   * while still carrying speed. So the Lawn reads the heading of this Mow
+   * Stroke against the heading of the last one, both worked out from the
+   * ground actually covered and never from anything the Mower says about its
+   * own wheels, and asks whether the bend between them is sharp enough, and
+   * whether the Mower was going fast enough, to be that shape.
+   *
+   * It always remembers this Mow Stroke's heading for the next one, whether
+   * or not this one drifted, so two ordinary corners taken back to back are
+   * read against each other and not against whatever drift happened earlier.
+   */
+  private sawDrift(ws: WebSocket, from: Place, to: Place, drove: number): boolean {
+    if (drove <= 0) return false;
+    const now = Date.now();
+    const dx = (to.x - from.x) / drove, dy = (to.y - from.y) / drove;
+    const last = this.lastHeading.get(ws);
+    this.lastHeading.set(ws, { dx, dy, at: now });
+    if (!last) return false;
+    const gap = now - last.at;
+    if (gap <= 0 || gap >= DRIFT_STALE_MS) return false;
+    const speed = drove / (gap / 1000);
+    const turn = Math.acos(Math.max(-1, Math.min(1, dx * last.dx + dy * last.dy)));
+    return speed >= DRIFT_SPEED && turn >= DRIFT_TURN;
+  }
+
+  /**
    * Whether the Lawn itself saw the Bump a Mower says it was in.
    *
    * A Mower speaks only for itself about a daze, and that is right: it cannot
@@ -1298,6 +1357,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
       s: Math.round(held?.c ?? 0),
       d: Math.round(held?.d ?? 0),
       b: held?.b ?? 0,
+      g: Math.round(held?.g ?? 0),
       q: held?.q ?? emptyTally().q,
     };
   }
