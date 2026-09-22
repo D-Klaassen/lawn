@@ -88,7 +88,7 @@ const driving = vm.createContext({Math, Date, performance:{now:()=>frameNow},
   mowing:0, clockOffset:0, peers:new Map([['peer',{seen:1000,x:120,y:100,a:0}]]), lastContact:new Map(),
   interpolatePeer(){order.push('peers');}, stunUntil:0, held:()=>false, pickerOpen:false,
   stick:{mag:0}, me:{x:100,y:100,a:0,v:25,draft:0}, W:408,H:272,
-  roadAt:()=>1, bite:()=>0, slipstream:()=>0, touchBrake:false,
+  roadAt:()=>1, bite:()=>0, slipstream:()=>0, touchBrake:false, rainIntensityAt:()=>0,
   stepDrive:()=>({vx:25,vy:0,drifting:false}), reducedMotion:{matches:false},
   leanBody(){},angleGap:()=>0,moveMower(dx,dy){order.push('drive');this.me.x+=dx;this.me.y+=dy;},
   ease:(_from,to)=>to,DRIFT_TAU:0.1,
@@ -134,7 +134,7 @@ const bundled = await build({entryPoints:['src/index.ts'],bundle:true,write:fals
 const { Lawn } = await import('data:text/javascript;base64,' + Buffer.from(bundled.outputFiles[0].text).toString('base64'));
 function lawn() {
   const game = Object.create(Lawn.prototype);
-  Object.assign(game, {places:new WeakMap(),travelBudgets:new Map(),budgets:new WeakMap(),scores:new Map(),strokes:0,
+  Object.assign(game, {places:new WeakMap(),lastHeading:new WeakMap(),travelBudgets:new Map(),budgets:new WeakMap(),scores:new Map(),strokes:0,
     trackBallMower(){},tell(){},schedulePersist(){},watchFields(){},mow(){return 0;},resync(){},
     messages:[],broadcast(raw){this.messages.push(JSON.parse(raw));}});
   return game;

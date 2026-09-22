@@ -19,3 +19,9 @@ public/road.js
 public/driving.js
 public/positions.js
 public/mowing.js
+
+# Shared weather clock, built before dev and deploy.
+public/weather.js
+
+# Claude Code local dev-server launch config, machine-specific.
+.claude/
