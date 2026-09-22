@@ -735,19 +735,24 @@ ram lower than the client does and `BUMP_CLOSING` is half of the client's
 told about, and the ladder climbs a little slower than the Stars on the screen
 do. The ladders are short for that reason.
 
-A drift is a third hole, and a different shape from the other two: the Lawn
-never runs the Mower's own physics, so it never sees a slide the way it sees a
+A drift is a third hole, and a wider one than the other two: the Lawn never
+runs the Mower's own physics, so it never sees a slide the way it sees a
 Bump's closing speed, and there is nothing here to relay on trust the way a
 daze is. So the Lawn reads the shape a slide leaves on the ground instead. Two
 Mow Strokes taken back to back give a heading each, worked out from the ground
-actually covered and not from anything the Mower says about its own wheels; a
-slide swings that heading round faster than steering alone does, so a sharp
-bend between them, taken above `DRIFT_SPEED`, is read as a drift and credited
-to `g`. It is a shape a hard corner can also leave, so this counts some
-cornering that was never a slide at all — a smaller hole than the other two,
-because nothing but a ladder of stars rides on it, and closing it all the way
-would cost the Lawn a copy of the client's own tyre physics for a thing that
-changes no Score.
+actually covered and not from anything the Mower says about its own wheels,
+and a bend between them sharper than `DRIFT_TURN`, taken above `DRIFT_SPEED`,
+is read as a drift and credited to `g`.
+
+The hole is wide because, off the grass a Mower mows on, a slide steers no
+harder than steering alone does — `stepDrive` only gives a slide extra grip
+where `road` is above zero, and the swath a Mower cuts is never there. So the
+bend a real slide leaves and the bend a sharp corner leaves are nearly the
+same shape, and `DRIFT_TURN` is set low enough to catch the slide at all,
+which means it catches most hard cornering along with it. This is a smaller
+matter than a forged Bump or a false Score, because nothing rides on `g` but a
+ladder of stars, and closing the hole properly would cost the Lawn a copy of
+the client's own tyre physics for a thing that changes no Score.
 
 An Emote cannot be made honest at all, so nothing is hung on one.
 

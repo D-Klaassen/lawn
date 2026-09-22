@@ -392,12 +392,19 @@ const BUMP_STALE_MS = 1000;
 const DRIFT_SPEED = 6;
 /**
  * How far one Mow Stroke's heading may bend from the last one's, in radians,
- * before it counts as a drift and not an ordinary corner. The Lawn never sees
- * the tyres, only the swath they left, so a drift here is a sharp turn taken
- * at speed — the shape a slide leaves on the ground — and not the client's
- * word for what its own wheels were doing.
+ * before it counts as a drift and not a Mower going dead straight. Off the
+ * road, where the mowing happens, a slide's own grip is no different from an
+ * ordinary corner's — `stepDrive` only gives a slide more grip when `road` is
+ * above zero — so the sharpest corner a Mower can steer without ever sliding
+ * bends a Mow Stroke almost exactly as far as a real slide does: both land
+ * within a degree of 0.07 rad at a ten-tile-a-second clip, run at 100 ms a
+ * Mow Stroke through `stepDrive` by hand. This asks for a good deal less than
+ * that, which is the honest shape of the hole: a Mower cutting hard corners
+ * at speed earns the same credit a Mower sliding through them does, and
+ * closing that would cost the Lawn a copy of the client's own tyre physics
+ * for a thing that changes no Score.
  */
-const DRIFT_TURN = 0.5;
+const DRIFT_TURN = 0.03;
 /** How long a gap between two Mow Strokes may be and still be one movement, and not two unrelated ones. */
 const DRIFT_STALE_MS = 1000;
 /**
