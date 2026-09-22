@@ -842,9 +842,13 @@ import { TREES, treeMesh } from '/trees.js';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
 import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
-import { rainIntensityAt, effectiveElapsedMs } from '/weather.js';
+import { rainIntensityAt as scheduledRainIntensityAt, effectiveElapsedMs } from '/weather.js';
+import { RAIN_COUNT, RAIN_WGSL } from '/rain.js';
 import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
+const previewRain = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
+  && new URLSearchParams(location.search).get('weather') === 'rain';
+const rainIntensityAt = previewRain ? () => 1 : scheduledRainIntensityAt;
 const roadAt = streetAt;
 /**
  * A Field has been finished. The tracker says so in the corner, but the
@@ -925,7 +929,8 @@ const BALL_OFFSET = MOWER_COL0 + MOWER_SLOTS * 4;
 const MOWER_LEAN0 = BALL_OFFSET + 8;
 /** The Field that has just been finished: which, when, and where its middle is. */
 const CELEBRATE0 = MOWER_LEAN0 + MOWER_SLOTS * 4;
-const CAM_FLOATS = CELEBRATE0 + 4;
+const WEATHER0 = CELEBRATE0 + 4;
+const CAM_FLOATS = WEATHER0 + 4;
 /** How long a finished Field stays lit, in seconds. */
 const FLARE_SECONDS = 3;
 /** Which Field is alight, the second it finished, and the middle of it. */
@@ -2289,6 +2294,7 @@ const FIELD_WGSL = `struct Cam {
   ballRoll : vec4f,
   mowerLean : array<vec4f, ${MOWER_SLOTS}>,   // pitch, roll; z and w spare
   flare : vec4f,   // the finished Field, the second it finished, and its middle
+  weather : vec4f, // rain intensity, animation time, patch centre x/z
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -3047,6 +3053,7 @@ fn fs_ball(i : MOut) -> @location(0) vec4f {
   return vec4f(shade(base, n, i.wpos, 0.88 + 0.12 * max(n.y, 0.0)) + vec3f(shine), 1);
 }
 
+${RAIN_WGSL}
 `;
 
 /* ---- small matrix helpers ---- */
@@ -3112,9 +3119,9 @@ const DAYLIGHT = {
 const RAINY_LIGHT = {
   dir: DAYLIGHT.dir,
   daylight: 1,
-  light: [0.32, 0.36, 0.42],
-  skyCol: [0.24, 0.28, 0.34],
-  ambient: 0.42,
+  light: [0.62, 0.68, 0.74],
+  skyCol: [0.52, 0.62, 0.72],
+  ambient: 0.60,
 };
 function mixAir(a, b, t) {
   const lerp = (x, y) => x + (y - x) * t;
@@ -3265,6 +3272,17 @@ async function initField() {
   const treesCast = caster("vs_tree_shadow", "triangle-list");
   const ballDraw = mk("vs_ball", "fs_ball", "triangle-list");
   const ballCast = caster("vs_ball_shadow", "triangle-list");
+  const rainDraw = device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [mainLayout] }),
+    vertex: { module, entryPoint: "vs_rain" },
+    fragment: { module, entryPoint: "fs_rain", targets: [{ format, blend: {
+      color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" },
+      alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+    } }] },
+    primitive: { topology: "triangle-list", cullMode: "none" },
+    depthStencil: { format: depthFormat, depthWriteEnabled: false, depthCompare: "less" },
+    multisample: { count: SAMPLES },
+  });
   const bake = device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [castLayout] }),
     vertex: { module, entryPoint: "vs_bake" },
@@ -3340,7 +3358,7 @@ async function initField() {
   return {
     device, ctx, format, depthFormat, cam, mowerBuffer, mowerVertices,
     trees, treesCast, treeBuffer, treeVertices,
-    ballDraw, ballCast, blades, ground, flowers, clover, mowers, bladesCast, mowersCast, grow, growFlowers, growClover, bake,
+    rainDraw, ballDraw, ballCast, blades, ground, flowers, clover, mowers, bladesCast, mowersCast, grow, growFlowers, growClover, bake,
     bindCast, bindFor, bindMain: null, bindGrow: null, shadowView,
     drawArgs, drawReset: new Uint32Array([(SEGS + 1) * 2, 0, 0, 0]),
     flowerArgs, flowerReset: new Uint32Array([66, 0, 0, 0]),
@@ -3352,7 +3370,7 @@ async function initField() {
 }
 
 let F = null;
-let cloudDrift = 0, cloudTick = null;
+let cloudDrift = 0, cloudTick = null, rainTime = 0;
 initField().then((f) => (F = f)).catch((e) => {
   document.getElementById("fallback").style.display = "grid";
   document.getElementById("fallback-text").textContent = `The lawn needs WebGPU. ${e.message}`;
@@ -3540,6 +3558,8 @@ function render(now, ts, dt) {
   }
   C[CELEBRATE0] = flare.id; C[CELEBRATE0 + 1] = flare.at;
   C[CELEBRATE0 + 2] = flare.x; C[CELEBRATE0 + 3] = flare.y;
+  if (rain > 0 && !still) rainTime += dt;
+  C.set([rain, rainTime, tx, tz], WEATHER0);
   F.device.queue.writeBuffer(F.cam, 0, C);
 
   F.device.queue.writeBuffer(F.drawArgs, 0, F.drawReset);
@@ -3618,6 +3638,11 @@ function render(now, ts, dt) {
   pass.setPipeline(F.trees);
   pass.setVertexBuffer(0, F.treeBuffer);
   pass.draw(F.treeVertices, TREES.length);
+  // Transparent rain reads the completed scene depth, without writing over it.
+  if (rain > 0 && !still) {
+    pass.setPipeline(F.rainDraw);
+    pass.draw(12, RAIN_COUNT);
+  }
   pass.end();
   F.device.queue.submit([enc.finish()]);
 }
@@ -3672,84 +3697,6 @@ const wheelWake = [];
 const skidMarks = [];
 const skidAnchors = new WeakMap();
 const slipParticles = [];
-
-/**
- * Rain. Streaks cover the screen evenly by construction — every one is
- * placed straight in screen space, not projected from a world position — but
- * a drop's own screen height is also read as its depth: near the top of the
- * screen it stands in for the far ground and creeps along, small and faint;
- * as the same drop falls toward the bottom it is standing in for ground
- * rushing past close to the camera, so it speeds up and grows, the way
- * anything does when it closes in on a camera pitched down at the ground.
- * One continuous curve does this rather than a few fixed speeds, so no drop
- * is ever caught moving like it is far away while sitting low on the screen,
- * which is what read as rain falling on nothing instead of onto the field.
- * Splashes are the one part that does use the world: a handful of rings on
- * the ground near the Mower, placed through the same `projector` the field
- * already trusts for Bumps and Stars, so they sit correctly on the grass.
- * Purely local weather dressing throughout — every Mower agrees on how hard
- * it is raining, but not one of them needs to agree on where a drop falls.
- */
-const RAIN_COUNT = 48;
-const RAIN_NEAR_SPEED = 1.05, RAIN_FAR_SPEED = 0.22;  // screen heights a second
-const RAIN_NEAR_LEN = 0.1, RAIN_FAR_LEN = 0.032;      // screen heights
-const RAIN_NEAR_WIDTH = 1.3, RAIN_FAR_WIDTH = 0.85;   // device pixels, before dpr
-const RAIN_NEAR_ALPHA = 0.26, RAIN_FAR_ALPHA = 0.16;
-const SPLASH_RADIUS = 9;    // Tiles around the Mower splashes can land in
-const SPLASH_RATE = 14;     // Splashes a second at full rain
-const SPLASH_LIFE = 280;    // Milliseconds a splash ring is visible
-let raindrops = null, rainClock = null, splashDue = 0;
-const splashes = [];
-
-/** A drop nearer the bottom of the screen reads as nearer the camera: eased so it changes gently in the distance and briskly close up. */
-function nearness(y) { return Math.max(0, Math.min(1, y)) ** 1.1; }
-
-function drawRain(cw, ch, dpr, rain) {
-  if (rain <= 0) { raindrops = null; splashes.length = 0; splashDue = 0; return; }
-  if (!raindrops) raindrops = Array.from({ length: RAIN_COUNT }, () => ({ x: Math.random(), y: Math.random() }));
-  const now = performance.now();
-  const dt = Math.min(0.05, (now - (rainClock ?? now)) / 1000);
-  rainClock = now;
-  g.save();
-  g.lineCap = "round";
-  g.strokeStyle = "#e4f2f7";
-  for (const drop of raindrops) {
-    const near = nearness(drop.y);
-    const speed = RAIN_FAR_SPEED + (RAIN_NEAR_SPEED - RAIN_FAR_SPEED) * near;
-    drop.y += speed * dt;
-    if (drop.y > 1.05) { drop.y = -0.05; drop.x = Math.random(); continue; }
-    const len = (RAIN_FAR_LEN + (RAIN_NEAR_LEN - RAIN_FAR_LEN) * near) * ch;
-    const x = drop.x * cw, y = drop.y * ch;
-    g.globalAlpha = rain * (RAIN_FAR_ALPHA + (RAIN_NEAR_ALPHA - RAIN_FAR_ALPHA) * near);
-    g.lineWidth = (RAIN_FAR_WIDTH + (RAIN_NEAR_WIDTH - RAIN_FAR_WIDTH) * near) * dpr;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.lineTo(x - 4 * dpr * near, y + len);
-    g.stroke();
-  }
-  splashDue += rain * SPLASH_RATE * dt;
-  while (splashDue >= 1 && splashes.length < 40) {
-    splashDue--;
-    splashes.push({
-      x: me.x + (Math.random() - 0.5) * SPLASH_RADIUS * 2,
-      z: me.y + (Math.random() - 0.5) * SPLASH_RADIUS * 2,
-      born: now,
-    });
-  }
-  while (splashes.length && now - splashes[0].born > SPLASH_LIFE) splashes.shift();
-  const project = projector(cw, ch);
-  for (const splash of splashes) {
-    const t = (now - splash.born) / SPLASH_LIFE;
-    const p = project(splash.x, 0.02, splash.z);
-    if (!p) continue;
-    g.globalAlpha = rain * (1 - t) * 0.45;
-    g.lineWidth = 1.2 * dpr;
-    g.beginPath();
-    g.arc(p[0], p[1], (2 + t * 9) * dpr, 0, Math.PI * 2);
-    g.stroke();
-  }
-  g.restore();
-}
 
 function drawSlipstream(cw, ch, dpr) {
   const now = performance.now();
@@ -4433,7 +4380,6 @@ function drawHud(now) {
   drawStars(cw, ch, dpr);
   drawEmotes(cw, ch, dpr);
   drawMap(cw, ch, dpr);
-  drawRain(cw, ch, dpr, rainIntensityAt(now));
 }
 
 setTimeout(() => (help.style.opacity = "0"), 8000);
