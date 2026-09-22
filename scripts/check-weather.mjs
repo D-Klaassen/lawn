@@ -58,7 +58,7 @@ assert.ok(Date.now() - started < 50, 'a Tile with the epoch as its moment resolv
 assert.ok(neverMown > 365 * 24 * 60 * 60 * 1000, 'and still reads as having grown for a very long time');
 
 // Rain in the drive model: less grip, and grass drags a little more.
-const input = { throttle: 1, turn: 0, brake: false, road: 0, grass: 1, tow: 0, stunned: false };
+const input = { throttle: 1, turn: 0, brake: false, street: 0, grass: 1, tow: 0, stunned: false };
 const dry = { x: 0, y: 0, a: 0, v: 0 }, wet = { x: 0, y: 0, a: 0, v: 0 };
 for (let i = 0; i < 5 * 60; i++) {
   stepDrive(dry, { ...input, turn: 1 }, 1 / 60);
@@ -69,15 +69,15 @@ assert.ok(wet.v < dry.v, 'a soaked lawn drags on the mower a little more than a 
 
 // A hard turn at speed should break a wet mower loose without ever tapping the
 // brake, and leave it sliding for longer than a dry brake-tap slide would.
-const roadInput = { throttle: 1, turn: 0, brake: false, road: 1, grass: 0, tow: 0, stunned: false };
+const streetInput = { throttle: 1, turn: 0, brake: false, street: 1, grass: 0, tow: 0, stunned: false };
 const fast = { x: 0, y: 0, a: 0, v: 0 };
-for (let i = 0; i < 3 * 60; i++) stepDrive(fast, roadInput, 1 / 60);
-const slipped = stepDrive({ ...fast }, { ...roadInput, turn: 1, rain: 1 }, 1 / 60);
-assert.ok(slipped.drifting, 'a hard turn on a wet road slips without any brake tap');
-const notSlipped = stepDrive({ ...fast }, { ...roadInput, turn: 1, rain: 0 }, 1 / 60);
-assert.ok(!notSlipped.drifting, 'the same turn on a dry road does not');
-const wetSlide = { ...fast }; stepDrive(wetSlide, { ...roadInput, turn: 1, rain: 1 }, 1 / 60);
-const drySlide = { ...fast }; stepDrive(drySlide, { ...roadInput, turn: 1, brake: true }, 1 / 60);
+for (let i = 0; i < 3 * 60; i++) stepDrive(fast, streetInput, 1 / 60);
+const slipped = stepDrive({ ...fast }, { ...streetInput, turn: 1, rain: 1 }, 1 / 60);
+assert.ok(slipped.drifting, 'a hard turn on a wet Street slips without any brake tap');
+const notSlipped = stepDrive({ ...fast }, { ...streetInput, turn: 1, rain: 0 }, 1 / 60);
+assert.ok(!notSlipped.drifting, 'the same turn on a dry Street does not');
+const wetSlide = { ...fast }; stepDrive(wetSlide, { ...streetInput, turn: 1, rain: 1 }, 1 / 60);
+const drySlide = { ...fast }; stepDrive(drySlide, { ...streetInput, turn: 1, brake: true }, 1 / 60);
 assert.ok(wetSlide.slide > drySlide.slide, 'a wet slide lasts longer than a dry brake-tap slide');
 
 console.log('Weather: rain is occasional and ramped, Regrowth counts it correctly and additively, and it loosens a mower\'s grip.');

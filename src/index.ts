@@ -1,7 +1,9 @@
 import { treeAt, treeEarthAt } from "./trees";
-import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from "./road";
+import { ringDistance, STREET_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
 import { effectiveElapsedMs } from "./weather";
+import { motion } from "./positions";
+import { MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from "./mowing";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -92,19 +94,22 @@ function regrowTable(width: number, height: number): Float32Array {
 
 /**
  * The map: where each seed of a Field sits, in fractions of the Lawn, how
- * wide a lane and a Ditch are, and which seams carry water. It is the same
- * table as `public/fields.js` and must stay so: the two sides have to agree
- * on which Tiles are grass, or a score counts blades that were never there.
+ * wide a Path and a run of Water are, and what each seam is made of. It is
+ * the same table as `public/fields.js` and must stay so: the two sides have
+ * to agree on which Tiles are grass, or a score counts blades that were never
+ * there.
  */
 const SEEDS: [number, number][] = [
   [0.20, 0.31], [0.40, 0.30], [0.60, 0.29], [0.80, 0.30],
   [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
-const LANE = 0.9;
-const DITCH = 2.6;
+const PATH = 2.6;
+const WATER = 3.4;
 const BANK = 1.6;
 const BRIDGE = 6;
-const DITCHES = [[0, 1], [1, 2], [2, 3], [4, 5], [5, 6], [6, 7], [7, 8]];
+/** Mirrors `SEAMS` in `public/fields.js`: the seams that carry Water, and the Streets. */
+const WATERS = [[1, 2], [5, 6], [7, 8]];
+const STREETS = [[0, 4], [0, 5], [1, 5], [1, 6], [2, 6], [2, 7], [3, 7], [3, 8]];
 const SHORE_RADIUS = 1.2;
 
 function warpX(x: number, y: number): number {
@@ -115,7 +120,7 @@ function warpY(x: number, y: number): number {
 }
 
 /**
- * How far the shoreline of a Ditch wanders from the straight, in Tiles.
+ * How far the shoreline of a run of Water wanders from the straight, in Tiles.
  * Mirrors `shoreWander` in `public/fields.js`, which must stay identical or
  * the Lawn and the client disagree about which Tiles are grass.
  */
@@ -133,46 +138,59 @@ function water(into: number, beyond: number): number {
 }
 
 /**
- * Where a point stands on the Lawn: the Field that owns it, or -1 for a lane,
- * a bank or the water, and how far it lies inside the water. Mirrors
- * `placeAt` in `public/fields.js` exactly.
+ * Where a point stands on the Lawn: the Field that owns it, or -1 for a Path,
+ * a Street, a bank or the Water, and how far it lies inside the Water.
+ * Mirrors `placeAt` in `public/fields.js` exactly.
  */
-function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
-  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
+function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number; street: number; edge: number } {
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE, edge: 0 };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, d0 = Infinity, d1 = Infinity;
+  let first = 0, second = 0, third = 0;
+  let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
-    if (d < d0) { d1 = d0; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   const edge = (d1 - d0) * 0.5;
+  const beside = (a: number, b: number) =>
+    (first !== a && first !== b ? d0 : (second !== a && second !== b ? d1 : d2));
   let wet = -BRIDGE;
   const wander = shoreWander(x, y);
-  // Measure every ditch, even across a field boundary. Switching the nearest
-  // pair at a junction must not cut off the shoreline or its collision margin.
-  for (const [a, b] of DITCHES) {
+  // Measure every run of Water, even across a field boundary. Switching the
+  // nearest pair at a junction must not cut off the shoreline or its
+  // collision margin.
+  for (const [a, b] of WATERS) {
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
       if (k !== a && k !== b) third = Math.min(third, distances[k]);
     }
-    // Leave a dry lane before the third field, with rounded bank corners.
-    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    const shore = water(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
+    // Leave a dry Path before the third field, with rounded bank corners.
+    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - PATH - BANK;
+    const shore = water(WATER + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
     const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
     const span2 = (px - bx) ** 2 + (py - by) ** 2;
     const along = Math.sqrt(Math.max(0, span2 - across * across));
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
-  const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  const road = roadDistance(x, y, width, height) - ROAD_HALF_WIDTH;
-  wet = Math.min(wet, road);
-  return { field: road <= 0 || edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
+  const kerb = -ringDistance(x, y, width, height);
+  let street = kerb;
+  for (const [a, b] of STREETS) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    const past = Math.max(0, (Math.max(distances[a], distances[b]) - beside(a, b)) * 0.5);
+    street = Math.min(street, Math.hypot(across, past));
+  }
+  wet = Math.min(wet, street - STREET_HALF_WIDTH);
+  const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
+    || treeEarthAt(x, y, width, height);
+  return { field: bare ? -1 : first, wet, street, edge };
 }
 
 /** Water and trunks stop reported strokes, whatever the client says. */
@@ -182,19 +200,21 @@ function blocked(x: number, y: number): boolean {
 }
 
 /**
- * How far apart the Lawn reads the swath while it looks for water. A Ditch is
- * `2 * DITCH` Tiles wide, so a step this short can never stride over one.
+ * How far apart the Lawn reads the swath while it looks for water. A run of
+ * Water is `2 * WATER` Tiles wide, so a step this short can never stride over
+ * one.
  */
 const WATER_STEP = 0.75;
 
 const REGROW = regrowTable(LAWN_WIDTH, LAWN_HEIGHT);
 
 /**
- * Which Field owns each Tile, or `NO_FIELD` for a lane, a bank or the water.
+ * Which Field owns each Tile, or `NO_FIELD` for a Path, a Street, a bank or
+ * the Water.
  *
  * It is the same answer `placeAt` gives, held as a table for the same reason
  * the Growth Rate is: the Lawn is read Tile by Tile, many times a second, and
- * `placeAt` measures nine seeds and four Ditches for every read. The Mow
+ * `placeAt` measures nine seeds and three runs of Water for every read. The Mow
  * Stroke used to pay that price per Tile to ask whether grass grows there; it
  * now reads one byte, and gets the Field the Tile belongs to for nothing —
  * which is how the Lawn knows which Fields to read for a finish.
@@ -258,8 +278,6 @@ function bladeHeight(mownAt: number, regrow: number, now: number): number {
   const t = (age - COOLDOWN_SECONDS) / regrow;
   return 1 - (1 - t) * (1 - t);
 }
-/** Radius of one Mow Stroke, in Tiles. */
-const MOW_RADIUS = 2.6;
 
 
 /**
@@ -389,6 +407,24 @@ const BUMP_CLOSING = 3;
 /** How stale a report may be and still say where a Mower was for a Bump. */
 const BUMP_STALE_MS = 1000;
 /**
+ * How fast a Mower must be driving, in Tiles a second, before a sharp bend in
+ * its own swath counts as a drift and not a Mower that has simply stopped.
+ * The client will not start a slide under `me.v > 7` either, so this asks
+ * for a little less: the Lawn reads the speed as an average across a whole
+ * Mow Stroke, which blurs a true peak down.
+ */
+const DRIFT_SPEED = 6;
+/**
+ * How far one Mow Stroke's heading may bend from the last one's, in radians,
+ * before it counts as a drift and not an ordinary corner. The Lawn never sees
+ * the tyres, only the swath they left, so a drift here is a sharp turn taken
+ * at speed — the shape a slide leaves on the ground — and not the client's
+ * word for what its own wheels were doing.
+ */
+const DRIFT_TURN = 0.5;
+/** How long a gap between two Mow Strokes may be and still be one movement, and not two unrelated ones. */
+const DRIFT_STALE_MS = 1000;
+/**
  * Notes the Lawn keeps about what has lately happened on it, and how old one
  * may be and still be worth telling a Mower that has just arrived.
  *
@@ -434,7 +470,7 @@ const SCORE_GAP_MS = 250;
  * and a missing `a` the older shape, for a tab open across a deploy.
  */
 type ClientMessage =
-  | { t: "mow"; x: number; y: number; a?: number; x1?: number; y1?: number }
+  | { t: "mow"; x: number; y: number; a?: number; vx?: number; vy?: number; seq?: number; x1?: number; y1?: number }
   /**
    * Where a Mower is and which way it points. A Mow Stroke now carries this,
    * so only a tab open across a deploy still sends it on its own.
@@ -492,6 +528,8 @@ interface Score {
   d?: number;
   /** Bumps the Lawn saw it in. */
   b?: number;
+  /** Blades it took off while a Mow Stroke said it was drifting. */
+  g?: number;
 }
 
 /**
@@ -511,6 +549,7 @@ function tallyOf(score: Score): Tally {
     q: score.q ?? emptyTally().q,
     d: score.d ?? 0,
     b: score.b ?? 0,
+    g: score.g ?? 0,
   };
 }
 
@@ -555,6 +594,8 @@ export class Lawn extends DurableObject {
    * Mower the Lawn has lost says where it starts and cuts nothing.
    */
   private places = new WeakMap<WebSocket, Place>();
+  /** The heading and moment of a Mower's last Mow Stroke, for `sawDrift`. */
+  private lastHeading = new WeakMap<WebSocket, { dx: number; dy: number; at: number }>();
   /**
    * How much travel each Mower has left, by Mower Key and not by socket.
    * Windows are free and hands are not, so ten tabs on one Key drive one
@@ -758,6 +799,8 @@ export class Lawn extends DurableObject {
       // The first Mow Stroke of a Mower only says where it starts. Nothing is
       // cut, because the Lawn has no idea where that Mower came from.
       this.seed(ws, purse, x, y);
+      if (heading) this.report(ws, id, name, key, { x, y }, a, motion(message.vx, message.vy));
+      this.acceptPosition(ws, message, { x, y });
       return;
     }
 
@@ -776,7 +819,8 @@ export class Lawn extends DurableObject {
       // client that claims a mile gets as far as its travel allows, and the
       // ladder is measured on the near end of that.
       const drove = Math.hypot(to.x - from.x, to.y - from.y);
-      if (key) this.credit(ws, key, name, blades, drove);
+      const drifted = this.sawDrift(ws, from, to, drove);
+      if (key) this.credit(ws, key, name, blades, drove, drifted);
       // A Field can only be finished by grass coming off it, so this is the
       // one moment worth looking.
       if (blades > 0) this.watchFields();
@@ -800,7 +844,15 @@ export class Lawn extends DurableObject {
     // report as well, because it is the same movement. The Mower is shown
     // where the Lawn drove it to and not where the report said, so there is
     // nothing to pull back: `within` is for the older `pos` message only.
-    if (heading) this.report(ws, id, name, key, to, a);
+    const velocity = to.x === x && to.y === y ? motion(message.vx, message.vy) : { vx: 0, vy: 0 };
+    if (heading) this.report(ws, id, name, key, to, a, velocity);
+    this.acceptPosition(ws, message, to);
+  }
+
+  private acceptPosition(ws: WebSocket, message: Extract<ClientMessage, { t: "mow" }>, at: Place): void {
+    if (Number.isSafeInteger(message.seq) && message.seq! > 0) {
+      ws.send(JSON.stringify({ t: "accepted", seq: message.seq, x: at.x, y: at.y }));
+    }
   }
 
   /**
@@ -815,6 +867,7 @@ export class Lawn extends DurableObject {
     key: string,
     at: Place,
     a: number,
+    velocity?: { vx: number; vy: number },
   ): void {
     this.trackBallMower(ws, id, at);
     const held = this.scores.get(key);
@@ -830,7 +883,7 @@ export class Lawn extends DurableObject {
     this.broadcast(
       // `nm` is what this Mower is called and coloured by, and `n` is when
       // the report was made. They are different things with unlucky names.
-      JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, s, ac, n: Date.now() }),
+      JSON.stringify({ t: "peer", id, nm: name, x: at.x, y: at.y, a, ...velocity, s, ac, n: Date.now() }),
       ws,
     );
     this.tell(ws, held);
@@ -918,7 +971,7 @@ export class Lawn extends DurableObject {
     const speed = Math.hypot(vx, vy);
     const scale = speed > MAX_SPEED ? MAX_SPEED / speed : 1;
     this.ballMowers.set(ws, { id, ...at, vx: vx * scale, vy: vy * scale, at: now });
-    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + MOW_RADIUS * 0.85) {
+    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + COLLISION_RADIUS) {
       this.ballTick = now;
       this.ballTimer = setInterval(() => this.tickBall(), 1000 / 30);
     }
@@ -1066,44 +1119,26 @@ export class Lawn extends DurableObject {
    */
   private mow(x0: number, y0: number, x1: number, y1: number): number {
     const now = Math.floor(Date.now() / 1000);
-    const minX = Math.max(0, Math.floor(Math.min(x0, x1) - MOW_RADIUS));
-    const maxX = Math.min(LAWN_WIDTH - 1, Math.ceil(Math.max(x0, x1) + MOW_RADIUS));
-    const minY = Math.max(0, Math.floor(Math.min(y0, y1) - MOW_RADIUS));
-    const maxY = Math.min(LAWN_HEIGHT - 1, Math.ceil(Math.max(y0, y1) + MOW_RADIUS));
-
-    const dx = x1 - x0;
-    const dy = y1 - y0;
-    const len2 = dx * dx + dy * dy;
-
     this.cutByField.fill(0);
     let blades = 0;
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const px = x + 0.5 - x0;
-        const py = y + 0.5 - y0;
-        const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
-        const ox = px - t * dx;
-        const oy = py - t * dy;
-        if (ox * ox + oy * oy <= MOW_RADIUS * MOW_RADIUS) {
-          const i = y * LAWN_WIDTH + x;
-          const field = FIELD_OF[i];
-          if (field !== NO_FIELD) {
-            const off = bladeHeight(this.mownAt[i], REGROW[i], now);
-            blades += off;
-            this.cutByField[field] += off;
-          }
-          this.mownAt[i] = now;
-        }
+    forEachMownTile(x0, y0, x1, y1, LAWN_WIDTH, LAWN_HEIGHT, MOW_RADIUS, (i) => {
+      const field = FIELD_OF[i];
+      if (field !== NO_FIELD) {
+        const off = bladeHeight(this.mownAt[i], REGROW[i], now);
+        blades += off;
+        this.cutByField[field] += off;
       }
-    }
+      this.mownAt[i] = now;
+    });
     return blades;
   }
 
   /**
    * Add one Mow Stroke to what the Lawn holds for this Mower: the blades it
-   * took off, and the Tiles it drove.
+   * took off, the Tiles it drove, and, on the Mower's own word, the blades
+   * that came off while its tyres were sliding.
    *
-   * All three grow and none of them ever falls, which is what lets an
+   * All of them grow and none of them ever falls, which is what lets an
    * Achievement be for ever. The record is the one the map holds, so it is
    * changed in place and not rebuilt: a Score that is rebuilt is a Score that
    * silently drops the fields a later version added.
@@ -1114,10 +1149,12 @@ export class Lawn extends DurableObject {
     name: string,
     blades: number,
     drove: number,
+    drifting: boolean,
   ): void {
     const score = this.scores.get(key) ?? { n: name, c: 0 };
     score.c += blades;
     score.d = tidy((score.d ?? 0) + drove);
+    if (drifting && blades > 0) score.g = (score.g ?? 0) + blades;
     // The finishes are put on the record even when there are none, so that
     // reading it never has to build them: a Mower reports ten times a second,
     // and a Tally built afresh each time is throwaway arrays ten times a
@@ -1237,6 +1274,38 @@ export class Lawn extends DurableObject {
   }
 
   /**
+   * Whether one Mow Stroke bent sharply enough off the last one, at speed, to
+   * be a drift and not an ordinary corner.
+   *
+   * The Lawn never runs the Mower's own physics and so never sees a slide for
+   * itself the way it sees a swath. What it can see is the shape the swath
+   * left: a slide swings the Mower's heading away from where it was pointed a
+   * moment before, faster than steering alone turns it, and it does that
+   * while still carrying speed. So the Lawn reads the heading of this Mow
+   * Stroke against the heading of the last one, both worked out from the
+   * ground actually covered and never from anything the Mower says about its
+   * own wheels, and asks whether the bend between them is sharp enough, and
+   * whether the Mower was going fast enough, to be that shape.
+   *
+   * It always remembers this Mow Stroke's heading for the next one, whether
+   * or not this one drifted, so two ordinary corners taken back to back are
+   * read against each other and not against whatever drift happened earlier.
+   */
+  private sawDrift(ws: WebSocket, from: Place, to: Place, drove: number): boolean {
+    if (drove <= 0) return false;
+    const now = Date.now();
+    const dx = (to.x - from.x) / drove, dy = (to.y - from.y) / drove;
+    const last = this.lastHeading.get(ws);
+    this.lastHeading.set(ws, { dx, dy, at: now });
+    if (!last) return false;
+    const gap = now - last.at;
+    if (gap <= 0 || gap >= DRIFT_STALE_MS) return false;
+    const speed = drove / (gap / 1000);
+    const turn = Math.acos(Math.max(-1, Math.min(1, dx * last.dx + dy * last.dy)));
+    return speed >= DRIFT_SPEED && turn >= DRIFT_TURN;
+  }
+
+  /**
    * Whether the Lawn itself saw the Bump a Mower says it was in.
    *
    * A Mower speaks only for itself about a daze, and that is right: it cannot
@@ -1294,6 +1363,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
       s: Math.round(held?.c ?? 0),
       d: Math.round(held?.d ?? 0),
       b: held?.b ?? 0,
+      g: Math.round(held?.g ?? 0),
       q: held?.q ?? emptyTally().q,
     };
   }
@@ -1450,7 +1520,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
 
   /**
    * How far a Mower really gets along its swath: as far as it asked for, or
-   * as far as the near bank of a Ditch. A Mower cannot drive through water,
+   * as far as the near bank of the Water. A Mower cannot drive through water,
    * so neither can a client that says it did — the Lawn stops the swath at
    * the water's edge and sends that Mower the Lawn as the Lawn sees it.
    *

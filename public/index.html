@@ -7,7 +7,7 @@
 <meta name="description" content="One shared lawn for everybody. Drive the mower, cut the grass. It grows back whether you are here or not." />
 <style>
   * { box-sizing: border-box; }
-  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-top: env(safe-area-inset-top, 0px); }
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-top: env(safe-area-inset-top, 0px); --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px); }
   html, body { height: 100%; margin: 0; }
   body {
     background: #cbdcc2;
@@ -80,15 +80,7 @@
        window nobody tried. */
     --score-floor: calc(38px + var(--safe-bottom) + clamp(24px, 3.1vw, 42px) + 30px);
   }
-  body.touch {
-    --keys-height: 0px;
-    /* What the bottom of a touch screen has already spoken for: the stick
-       zone on the left, and the column of buttons standing over the map on
-       the right. Whichever reaches higher is the floor, because a card below
-       it is a card under a thumb. The column is three 52px buttons and two
-       10px gaps over the 12px it sits off the map. */
-    --thumb-floor: max(min(42dvh, 330px), calc(var(--map-top, 150px) + 188px));
-  }
+  body.touch { --keys-height: 0px; }
   #keys {
     /* One row, on the middle of the map. The map's right edge stands at the
        same 16px margin the map is drawn with and its left edge is
@@ -143,7 +135,6 @@
     /* The bottom left is the stick on a thumb screen, so the log stands above
        everything the thumbs have claimed and keeps fewer lines. */
     #log { left: 10px; width: min(66vw, 320px); font-size: 11.5px; }
-    body.touch #log { bottom: calc(var(--thumb-floor) + 10px); }
   }
   @media (prefers-reduced-motion: reduce) {
     .log-line { animation: none; }
@@ -445,10 +436,6 @@
     text-shadow: 0 1px 3px #14200e;
   }
   #award-toast.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
-  /* A thumb drives from the bottom of the screen, so the card stands off it.
-     This holds on a tablet too, where the window is wide enough to keep the
-     rest of the large layout. */
-  body.touch #award-toast { bottom: calc(var(--thumb-floor) + 10px); }
   /* The ring that leaves the card the moment it lands. It is a box-shadow and
      not a child, so `overflow: hidden` clips the sweep without clipping it. */
   #award-toast.visible { animation: award-ring 1s cubic-bezier(.2, .8, .3, 1); }
@@ -480,15 +467,10 @@
 
   /* ------------------------------------------------------------------ *
    * touch controls
-   * A thumb gets one stick and two buttons, and nothing else on a phone
+   * A thumb gets one stick and a compact action group. Nothing else on a phone
    * may sit where the thumbs land: the bottom left and the bottom right.
    * ------------------------------------------------------------------ */
-  #drive-status { position: fixed; bottom: calc(18px + var(--safe-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: 18px; background: #203321d9; color: #f2e5be; font: 12px system-ui; pointer-events: none; }
-  #drive-pace { font-variant-numeric: tabular-nums; min-width: 58px; }
-  #draft-meter { width: 44px; height: 8px; accent-color: #e4c773; }
   #brake-btn { font: 600 12px system-ui; touch-action: none; }
-  body.touch #drive-status { bottom: calc(90px + var(--safe-bottom, 0px)); }
-  @media (max-width: 600px) { #drive-status { gap: 7px; padding: 7px 10px; } #draft-meter { width: 28px; } }
   #touch-ui { display: none; }
   body.touch #touch-ui { display: block; }
   #stick-zone {
@@ -530,7 +512,7 @@
     box-shadow: 0 4px 16px rgba(11,18,8,.4);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .touch-btn:active { transform: scale(.94); }
+  .touch-btn:active { transform: scale(.96); }
   .touch-btn[aria-pressed="true"], .touch-btn[aria-expanded="true"] {
     background: rgba(53,79,37,.88); border-color: rgba(232,205,128,.55);
   }
@@ -544,13 +526,6 @@
   #emote-row .touch-btn:nth-child(5) { animation-delay: .16s; }
   @keyframes emote-pop { from { transform: scale(.2); opacity: 0; } }
   body.touch #board, body.touch #awards { pointer-events: auto; }
-  /* A thumb screen keeps a column of buttons down the right. The window stands
-     in what is left of the width rather than centred under them, or the count
-     on the end of every bar reads from behind a button. */
-  body.touch #awards {
-    left: 10px; right: calc(84px + var(--safe-right, 0px)); width: auto;
-    transform: translateY(-50%);
-  }
   #awards-list { pointer-events: auto; }
 
   @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
@@ -708,6 +683,97 @@
   #log.collapsed #log-lines { display: none; }
   #log.collapsed { width: 28px; }
   @media (hover: none) { #log-toggle { opacity: 1; } }
+  .panel-close {
+    position: absolute; top: 8px; right: 8px; width: 44px; height: 44px;
+    border: 0; border-radius: 50%; background: #102719; color: #f4e7b6;
+    font: 24px/1 system-ui; cursor: pointer; pointer-events: auto; touch-action: manipulation;
+  }
+  #panel-shade { position: fixed; inset: 0; z-index: 30; background: #07120bbb; }
+  #panel-shade[hidden] { display: none; }
+  #board, #awards { z-index: 31; }
+  #board > .quest-label { padding-right: 30px; }
+  #board-list { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+  #awards-list { touch-action: pan-y; }
+  button:focus-visible { outline: 2px solid #f4d56e; outline-offset: 3px; }
+
+  /* Touch layout: a compact header, expandable information, and two thumb zones. */
+  body.touch { --thumb-floor: calc(156px + var(--safe-bottom)); --utility-top: calc(116px + var(--safe-top)); }
+  body.touch #brand { top: calc(10px + var(--safe-top)); left: calc(12px + var(--safe-left)); transform: none; font-size: 22px; }
+  body.touch #sound-toggle { top: calc(8px + var(--safe-top)); left: auto; right: calc(12px + var(--safe-right)); }
+  body.touch #score { top: calc(58px + var(--safe-top)); bottom: auto; left: calc(12px + var(--safe-left));
+    transform: none; width: max-content; max-width: calc(100% - 24px - var(--safe-left) - var(--safe-right));
+    display: flex; flex-direction: row-reverse; align-items: baseline; gap: 10px;
+    font-size: clamp(20px, 5vw, 25px); text-align: left; overflow: hidden; }
+  body.touch #mower-count { margin-bottom: 0; font-size: 10px; text-align: left; }
+  body.touch #help { top: calc(92px + var(--safe-top)); width: calc(100% - 24px - var(--safe-left) - var(--safe-right));
+    max-width: 560px; font-size: 11px; line-height: 1.4; letter-spacing: 0; }
+  body.touch #credit { display: none; }
+  body.touch #world-quests { top: var(--utility-top); right: calc(12px + var(--safe-right));
+    width: min(260px, calc(100% - 132px - var(--safe-left) - var(--safe-right)));
+    max-height: max(100px, calc(100dvh - var(--utility-top) - var(--thumb-floor) - 16px)); }
+  body.touch #world-quests h2 { height: 44px; flex-shrink: 0; padding-left: 10px; background: #162d20e8;
+    border: 1px solid #c5ad6255; border-radius: 12px; font: 13px/1.3 Georgia, serif; }
+  body.touch #quest-toggle { min-height: 44px; }
+  body.touch #world-quests::before { display: none; }
+  body.touch #world-quest-summary { display: block; margin: 6px 0 0; padding: 9px 10px;
+    border-radius: 10px; background: #162d20ee; font-size: 12px; line-height: 1.4; }
+  body.touch #world-quest-here { display: block; overflow-wrap: anywhere; font-weight: 600; }
+  body.touch #world-quest-here:empty::before { content: "Enter a field to start mowing"; }
+  body.touch #world-quest-here::after { content: none; }
+  body.touch #world-quest-done { display: none; }
+  body.touch #world-quest-list { margin-top: 6px; padding: 0 8px 6px; border-radius: 10px; background: #162d20e8; }
+  body.touch #world-quests.collapsed #world-quest-list { display: none; }
+  body.touch .world-quest { padding-top: 7px; padding-bottom: 7px; }
+  body.touch .world-quest-title { font-size: 12px; }
+  body.touch #map-controls { top: var(--utility-top); left: calc(64px + var(--safe-left)); right: auto;
+    bottom: auto !important; width: 44px !important; height: 44px !important; z-index: 16; }
+  body.touch #map-location { display: none; }
+  body.touch #map-toggle, body.touch #map-controls.collapsed #map-toggle {
+    position: static; width: 44px; height: 44px; opacity: 1; border-radius: 12px; font: 11px system-ui; }
+  body.touch #log, body.touch #log.collapsed { top: var(--utility-top); bottom: auto; left: calc(12px + var(--safe-left));
+    width: 44px; min-height: 44px; padding: 0; z-index: 17; }
+  body.touch #log-toggle { width: 44px; height: 44px; opacity: 1; border-radius: 12px; font: 11px system-ui; }
+  body.touch #log-lines { position: absolute; top: 52px; left: 0; width: min(360px, calc(100vw - 24px - var(--safe-left) - var(--safe-right)));
+    max-height: max(80px, calc(100dvh - var(--utility-top) - var(--thumb-floor) - 70px));
+    overflow-y: auto; overscroll-behavior: contain; padding: 12px; border-radius: 12px; background: #102719f5;
+    font-size: 12px; touch-action: pan-y; }
+  body.touch.log-open #world-quests, body.touch.mobile-map-open #world-quests, body.touch.emotes-open #world-quests { visibility: hidden; }
+  body.touch #stick-zone { left: var(--safe-left); bottom: var(--safe-bottom); width: min(46vw, 190px); height: 156px; }
+  body.touch #stick { width: 112px; height: 112px; bottom: 76px; }
+  body.touch #stick-knob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+  body.touch #touch-actions { right: calc(12px + var(--safe-right)); bottom: calc(20px + var(--safe-bottom));
+    display: grid; grid-template-columns: repeat(2, 52px); gap: 10px; }
+  body.touch .touch-action-row { position: static; }
+  body.touch #emote-row { position: absolute; right: 0; bottom: calc(100% + 12px); gap: 6px;
+    padding: 8px; border-radius: 16px; background: #102719f5; }
+  body.touch #emote-row .touch-btn { width: 44px; height: 44px; font-size: 23px; animation: none; }
+  body.touch #field-banner { top: calc(var(--utility-top) + 50px); width: min(88vw, 420px); }
+  body.touch #award-toast { top: calc(var(--utility-top) + 52px); bottom: auto; width: min(94vw, 440px); }
+  body.touch:has(#award-toast.visible) #field-banner, body.touch:has(#award-toast.visible) #world-quests { visibility: hidden; }
+  body.touch #board, body.touch #awards {
+    inset: calc(12px + var(--safe-top)) calc(12px + var(--safe-right)) calc(12px + var(--safe-bottom)) calc(12px + var(--safe-left));
+    width: auto; min-width: 0; max-width: 560px; height: auto; max-height: none; aspect-ratio: auto;
+    margin: auto; transform: none; padding: 20px 16px 16px; border: 1px solid #c5ad6266;
+    border-radius: 18px; background: #142d20; display: flex; flex-direction: column; }
+  body.touch #board[hidden], body.touch #awards[hidden] { display: none; }
+  body.touch #board > .quest-label, body.touch #awards > .quest-label {
+    flex: none; min-height: 32px; margin: 0 40px 12px 0; padding: 0; text-align: left; font-size: 15px; letter-spacing: .03em; }
+  body.touch #board-list, body.touch #awards-list { min-height: 0; max-height: none; flex: 1; overflow-y: auto; }
+  body.touch #board-list li { gap: 10px; }
+  body.touch #board-list .board-name { overflow-wrap: anywhere; }
+  body.touch.panel-open #touch-ui { visibility: hidden; }
+  body.touch.panel-open #field-banner, body.touch.panel-open #award-toast { visibility: hidden; }
+  @media (max-height: 560px) and (min-width: 500px) {
+    body.touch { --utility-top: calc(64px + var(--safe-top)); --thumb-floor: calc(136px + var(--safe-bottom)); }
+    body.touch #score { top: calc(10px + var(--safe-top)); left: 50%; transform: translateX(-50%); width: 170px; text-align: center; font-size: 24px; }
+    body.touch #mower-count { text-align: center; }
+    body.touch #help { display: none; }
+    body.touch #stick-zone { height: 136px; width: 156px; }
+    body.touch #stick { width: 100px; height: 100px; bottom: 66px; }
+    body.touch #world-quests { width: 220px; }
+    body.touch #field-banner { top: calc(60px + var(--safe-top)); width: min(42vw, 300px); }
+    body.touch #award-toast { top: auto; bottom: calc(64px + var(--safe-bottom)); width: min(44vw, 320px); }
+  }
 </style>
 </head>
 <body>
@@ -724,7 +790,6 @@
   <span><kbd>Tab</kbd>Score</span>
 </div>
 <div id="help">W A S D or arrows to drive · Space to brake, tap while turning to drift · follow a mower on the road for a slipstream · E emotes · Q achievements · M map · Tab board</div>
-<div id="drive-status" aria-label="Driving status"><span id="drive-pace">0</span><span id="drive-mode">Mowing</span><meter id="draft-meter" min="0" max="1" value="0" aria-label="Slipstream strength"></meter></div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -734,11 +799,14 @@
   <img id="field-banner-art" src="/assets/field-entry-banner.png" width="2172" height="724" alt="" />
   <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div><div id="field-banner-tally"></div></div>
 </div>
+<div id="panel-shade" hidden></div>
 <aside id="board" hidden aria-label="Mowers on the Lawn">
+  <button class="panel-close" type="button" aria-label="Close leaderboard">×</button>
   <span class="quest-label">On the Lawn &middot; this visit</span>
   <ol id="board-list"></ol>
 </aside>
 <aside id="awards" hidden aria-label="Achievements">
+  <button class="panel-close" type="button" aria-label="Close achievements">×</button>
   <span class="quest-label">Achievements &middot; <span id="awards-count"></span></span>
   <ol id="awards-list"></ol>
 </aside>
@@ -768,11 +836,13 @@ import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { TREES, treeMesh } from '/trees.js';
-import { roadAt } from '/road.js';
-import { stepDrive, slipstream, ROAD_SPEED } from '/driving.js';
+import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
+import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
+import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
 import { rainIntensityAt, effectiveElapsedMs } from '/weather.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, SEEDS, DITCHES, BRIDGE } from '/fields.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
+const roadAt = streetAt;
 /**
  * A Field has been finished. The tracker says so in the corner, but the
  * reward belongs on the Lawn: the parcel itself lights up, and the Mower
@@ -807,9 +877,11 @@ const minimapOpening = new Image();
 minimapOpening.src = '/assets/minimap-opening.png';
 const minimapCanvas = document.createElement('canvas');
 /** The notch inset. JS cannot ask env() for it, so it is read back from CSS. */
-let safeBottom = 0;
+let safeBottom = 0, safeTop = 0;
 function readSafeArea() {
-  safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-bottom")) || 0;
+  const style = getComputedStyle(document.documentElement);
+  safeBottom = parseFloat(style.getPropertyValue("--safe-bottom")) || 0;
+  safeTop = parseFloat(style.getPropertyValue("--safe-top")) || 0;
 }
 readSafeArea();
 addEventListener("resize", readSafeArea);
@@ -835,7 +907,6 @@ const SEGS = 4;          // segments along one blade
  * than the density it replaces.
  */
 const SAMPLES = 4;
-const MOWER_SCALE = 2.6; // the deck should about match the cut width
 /**
  * Mower models one frame can hold. The field carries them in the camera
  * uniform, so the count is fixed and the Lawn may hold more Mowers than this.
@@ -866,24 +937,10 @@ const PEER_TIMEOUT = 4000;
  * while it stands still. Every report costs the Lawn, so a Mower that has
  * nothing new to say says it seldom. See "What a report costs" in CONTEXT.md.
  *
- * A Mower that stops and drives off again is drawn sliding out of the spot it
- * stood in, because the two reports it sits between are that far apart. Half
- * a second is short enough that it reads as a Mower pulling away.
+ * Starting and stopping count as news, so idle heartbeats never delay a stop.
  */
 const SEND_MS = 100;
 const STILL_SEND_MS = 500;
-/**
- * A remote Mower is drawn where it really was this long ago, so there is
- * always a pair of real reports to sit between. Nothing is ever predicted
- * forward: a Mower turns too sharply for that to be anything but overshoot.
- *
- * Three reporting intervals. Two is the usual choice, but one lost report
- * then leaves a gap exactly as wide as the buffer, and the Mower stalls and
- * jumps. Three absorbs a lost report and measures far smoother; a fourth buys
- * almost nothing for another interval of delay.
- */
-const INTERP_DELAY = SEND_MS * 3;
-const COLLISION_RADIUS = MOWER_SCALE * 0.85;
 /**
  * A Mower that is bumped is dazed this long: it takes no throttle and no
  * steering, and it wears a ring of Stars while it comes to its senses.
@@ -913,7 +970,7 @@ let myHue = 80;
 
 /** A Snapshot entry is how far a Tile is through its Regrowth, at this scale. */
 const SNAPSHOT_SCALE = 65535;
-let W = 408, H = 272, RADIUS = 2.6;
+let W = 408, H = 272, RADIUS = MOW_RADIUS;
 /** Milliseconds of Regrowth per Tile. The server says how to build it. */
 let regrowMs = null;
 /** Milliseconds a Tile stays mown before it grows. The server says how long. */
@@ -1041,10 +1098,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) savePosition();
 });
 
-const MAX_V = ROAD_SPEED;
-const drivePace = document.getElementById('drive-pace');
-const driveMode = document.getElementById('drive-mode');
-const draftMeter = document.getElementById('draft-meter');
+const MAX_V = STREET_SPEED;
 let touchBrake = false;
 /**
  * How a Mower wears its weight. A machine under power lifts its nose, a
@@ -1140,35 +1194,24 @@ function buildRegrow(min, max, patch) {
 function cut(x0, y0, x1, y1, heading, mine) {
   if (!mownAt) return;
   const now = Date.now() + clockOffset;
-  const minX = Math.max(0, Math.floor(Math.min(x0, x1) - RADIUS));
-  const maxX = Math.min(W - 1, Math.ceil(Math.max(x0, x1) + RADIUS));
-  const minY = Math.max(0, Math.floor(Math.min(y0, y1) - RADIUS));
-  const maxY = Math.min(H - 1, Math.ceil(Math.max(y0, y1) + RADIUS));
   const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
   let harvested = 0;
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const px = x + 0.5 - x0, py = y + 0.5 - y0;
-      const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
-      const ox = px - t * dx, oy = py - t * dy;
-      if (ox * ox + oy * oy > RADIUS * RADIUS) continue;
-      const i = y * W + x;
-      if (mine && onGrass(x + 0.5, y + 0.5)) {
-        const height = heightAt(i, now);
-        // Only grass that is really there counts, so the score can never take
-        // a number that is not a number.
-        if (height > 0) bladesCut += height;
-        if (height > 0.1) harvested += height;
-      }
-      const standing = heightAt(i, now);
-      if (standing > 0.08 && !settling.has(i)) {
-        settling.set(i, { height: standing, born: performance.now(), duration: 170 + ((x * 17 + y * 31) % 60) });
-      }
-      mownAt[i] = now;
-      mowDir[i] = heading;
-      paintDir(i, heading);
+  forEachMownTile(x0, y0, x1, y1, W, H, RADIUS, (i, x, y) => {
+    if (mine && onGrass(x + 0.5, y + 0.5)) {
+      const height = heightAt(i, now);
+      // Only grass that is really there counts, so the score can never take
+      // a number that is not a number.
+      if (height > 0) bladesCut += height;
+      if (height > 0.1) harvested += height;
     }
-  }
+    const standing = heightAt(i, now);
+    if (standing > 0.08 && !settling.has(i)) {
+      settling.set(i, { height: standing, born: performance.now(), duration: 170 + ((x * 17 + y * 31) % 60) });
+    }
+    mownAt[i] = now;
+    mowDir[i] = heading;
+    paintDir(i, heading);
+  });
   fieldDirty = true;
   if (mine && len2 > 0.0001) mowerSound.cut(harvested);
   if (mine && harvested > 0.1 && len2 > 0.0001) throwClippings(x1, y1, heading, harvested);
@@ -1199,6 +1242,9 @@ function connect() {
     // still the Mower is standing. The Lawn has to be told where this Mower
     // is before it can cut anything for it.
     sentX = sentY = sentA = null;
+    positionReports = new PositionReports();
+    peers.clear();
+    lastContact.clear();
     // Say which Mower Key this browser holds, and say it in a message. A Key
     // in the address of the socket is written down by every machine between
     // here and the Lawn, and the Key is the whole of the proof of who a Mower
@@ -1245,6 +1291,7 @@ function connect() {
     }
     if (m.t === "hello") {
       W = m.w; H = m.h; RADIUS = m.radius;
+      showMowerCount(Number.isFinite(m.mowers) ? m.mowers : 1);
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
@@ -1260,6 +1307,12 @@ function connect() {
     } else if (m.t === "mow") {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
       strokes = m.strokes;
+    } else if (m.t === "accepted") {
+      const shift = positionReports.accept(m.seq, m.x, m.y);
+      if (shift && Math.hypot(shift.x, shift.y) > 0.00001) {
+        me.x += shift.x; me.y += shift.y;
+        savePosition();
+      }
     } else if (m.t === "peer") {
       const seed = m.nm || m.id;
       const p = peers.get(m.id) ?? { x: m.x, y: m.y, a: m.a, hue: hueOf(seed), buf: [] };
@@ -1273,7 +1326,11 @@ function connect() {
       // Keep the report on the shared clock, the same one the Tiles use.
       const at = Number.isFinite(m.n) ? m.n : Date.now() + clockOffset;
       const newest = p.buf[p.buf.length - 1];
-      if (!newest || at > newest.t) p.buf.push({ t: at, x: m.x, y: m.y, a: m.a });
+      // Old tabs have no velocity; use their observed travel as a fallback.
+      const span = newest ? (at - newest.t) / 1000 : 0;
+      const velocity = reportMotion(m.vx, m.vy) ?? (span > 0
+        ? reportMotion((m.x - newest.x) / span, (m.y - newest.y) / span) : null) ?? { vx: 0, vy: 0 };
+      addReport(p.buf, { t: at, x: m.x, y: m.y, a: m.a, ...velocity });
       peers.set(m.id, p);
     } else if (m.t === "score") {
       // The client counts along so the digits roll without waiting, and the
@@ -1312,6 +1369,8 @@ function connect() {
       // A socket has gone. That is presence and not news — a reload does it
       // too — so the Mower is forgotten from the Lawn and nothing is said.
       peers.delete(m.id);
+    } else if (m.t === "mowers") {
+      showMowerCount(Number.isFinite(m.mowers) ? m.mowers : 0);
     } else if (m.t === "gone") {
       // The Lawn has decided that one really did leave.
       if (m.nm) say("left", m.nm, "has gone offline, gone but not forgotten.");
@@ -1409,6 +1468,11 @@ function showMap(open) {
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === ' ' && e.target.closest?.('button, input, textarea, select, [contenteditable="true"]')) return;
+  if (document.body.classList.contains('panel-open')) {
+    if (k === 'escape') { closeBoard(); closeAwards(); }
+    if (k === 'tab') { e.preventDefault(); document.querySelector('aside:not([hidden]) .panel-close')?.focus(); }
+    return;
+  }
   keys.add(k);
   if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
@@ -1488,11 +1552,14 @@ function refreshBoard() {
 }
 
 function openBoard() {
+  closeAwards();
+  showEmoteRow(false);
   boardOpen = true;
   boardAt = performance.now();
   refreshBoard();
   board.hidden = false;
   boardBtn.setAttribute("aria-pressed", "true");
+  openPanel(board);
 }
 
 function closeBoard() {
@@ -1500,6 +1567,7 @@ function closeBoard() {
   boardOpen = false;
   board.hidden = true;
   boardBtn.setAttribute("aria-pressed", "false");
+  closePanel(board, boardBtn);
 }
 
 /**
@@ -1518,11 +1586,17 @@ function closeBoard() {
 const logEl = document.getElementById("log-lines");
 const logPanel = document.getElementById('log');
 const logToggle = document.getElementById('log-toggle');
+function showLog(open) {
+  logPanel.classList.toggle('collapsed', !open);
+  document.body.classList.toggle('log-open', open);
+  logToggle.textContent = document.body.classList.contains('touch') ? 'Log' : open ? '⌄' : '⌃';
+  logToggle.setAttribute('aria-expanded', String(open));
+  logToggle.setAttribute('aria-label', open ? 'Hide activity log' : 'Show activity log');
+}
 logToggle.addEventListener('click', () => {
-  const hidden = logPanel.classList.toggle('collapsed');
-  logToggle.textContent = hidden ? '⌃' : '⌄';
-  logToggle.setAttribute('aria-expanded', String(!hidden));
-  logToggle.setAttribute('aria-label', hidden ? 'Show activity log' : 'Hide activity log');
+  const open = logPanel.classList.contains('collapsed');
+  if (open && document.body.classList.contains('touch')) { setMinimapHidden(true); showEmoteRow(false); }
+  showLog(open);
 });
 /** Lines kept on screen at once. Past this the oldest goes without fanfare. */
 const LOG_KEEP = 7;
@@ -1608,7 +1682,7 @@ let awardMask = 0, awardsOpen = false, awardsAt = 0;
  * What the Lawn says this Mower has done. The window draws how far along each
  * ladder it is, and a bar it has not been told about cannot be drawn.
  */
-let myTally = { c: 0, q: new Array(9).fill(0), d: 0, b: 0 };
+let myTally = { c: 0, q: new Array(9).fill(0), d: 0, b: 0, g: 0 };
 /** Achievements waiting for their turn on the card. Two can land at once. */
 const awardQueue = [];
 let awardTimer;
@@ -1618,6 +1692,7 @@ function landTally(m) {
   if (Number.isFinite(m.s) && m.s >= 0) myTally.c = m.s;
   if (Number.isFinite(m.d) && m.d >= 0) myTally.d = m.d;
   if (Number.isFinite(m.b) && m.b >= 0) myTally.b = m.b;
+  if (Number.isFinite(m.g) && m.g >= 0) myTally.g = m.g;
   if (Array.isArray(m.q)) myTally.q = m.q.map((n) => (Number.isFinite(n) && n > 0 ? n : 0));
 }
 
@@ -1759,11 +1834,14 @@ function takeAwards(mask) {
 }
 
 function openAwards() {
+  closeBoard();
+  showEmoteRow(false);
   awardsOpen = true;
   awardsAt = performance.now();
   drawAwards();
   awards.hidden = false;
   awardsBtn.setAttribute("aria-pressed", "true");
+  openPanel(awards);
 }
 
 function closeAwards() {
@@ -1771,6 +1849,7 @@ function closeAwards() {
   awardsOpen = false;
   awards.hidden = true;
   awardsBtn.setAttribute("aria-pressed", "false");
+  closePanel(awards, awardsBtn);
 }
 
 drawAwards();
@@ -1852,6 +1931,8 @@ document.addEventListener('visibilitychange', () => {
 const emoteRow = document.getElementById("emote-row");
 
 function showEmoteRow(open) {
+  if (open && document.body.classList.contains('touch')) { showLog(false); setMinimapHidden(true); }
+  document.body.classList.toggle('emotes-open', open);
   emoteRow.hidden = !open;
   emoteBtn.setAttribute("aria-expanded", String(open));
 }
@@ -1866,17 +1947,52 @@ emoteRow.replaceChildren(...EMOTES.map((glyph, i) => {
 }));
 emoteBtn.addEventListener("click", () => showEmoteRow(emoteRow.hidden));
 boardBtn.addEventListener("click", () => (boardOpen ? closeBoard() : openBoard()));
-board.addEventListener("click", closeBoard);
+board.querySelector(".panel-close").addEventListener("click", closeBoard);
 awardsBtn.addEventListener("click", () => (awardsOpen ? closeAwards() : openAwards()));
-awards.addEventListener("click", closeAwards);
+awards.querySelector(".panel-close").addEventListener("click", closeAwards);
 
 /* A coarse pointer gets the controls at once; a laptop with a touchscreen
    gets them the moment a finger lands on it. */
-function useTouch() { document.body.classList.add("touch"); }
-if (matchMedia("(hover: none) and (pointer: coarse)").matches) useTouch();
-addEventListener("touchstart", useTouch, { once: true, passive: true });
-if (matchMedia("(pointer: coarse)").matches) {
-  help.textContent = "Drag the stick to drive · tap Brake while turning to drift · follow mowers on the road to slipstream";
+function useTouch() {
+  if (document.body.classList.contains('touch')) return;
+  document.body.classList.add('touch');
+  help.textContent = 'Drag the stick to steer · tap Brake while turning to drift';
+  showLog(false);
+  // Initial touch detection runs before the map and quest state is created.
+  queueMicrotask(() => {
+    setMinimapHidden(true); questsOpen = false; layoutQuests();
+    if (boardOpen) openPanel(board);
+    else if (awardsOpen) openPanel(awards);
+  });
+}
+if (matchMedia('(hover: none) and (pointer: coarse)').matches) useTouch();
+addEventListener('touchstart', useTouch, { once: true, passive: true });
+
+const panelShade = document.getElementById('panel-shade');
+const panelInert = new Set();
+panelShade.addEventListener('click', () => { closeBoard(); closeAwards(); });
+function openPanel(panel) {
+  if (!document.body.classList.contains('touch')) return;
+  keys.clear(); touchBrake = false; stick.mag = 0;
+  if (stickPointer !== -1) {
+    if (stickZone.hasPointerCapture(stickPointer)) stickZone.releasePointerCapture(stickPointer);
+    dropStick({ pointerId: stickPointer });
+  }
+  panelShade.hidden = false;
+  for (const child of document.body.children) {
+    if (child !== panel && child !== panelShade && !child.inert) { child.inert = true; panelInert.add(child); }
+  }
+  document.body.classList.add('panel-open');
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true');
+  panel.querySelector('.panel-close').focus();
+}
+function closePanel(panel, trigger) {
+  for (const child of panelInert) child.inert = false;
+  panelInert.clear();
+  panel.removeAttribute('aria-modal'); panel.removeAttribute('role');
+  panelShade.hidden = true;
+  document.body.classList.remove('panel-open');
+  if (panel.contains(document.activeElement)) trigger.focus();
 }
 
 /* ---- the tracker folds away where the screen is small ---- */
@@ -1891,9 +2007,10 @@ function layoutQuests() {
   quests.classList.toggle("collapsed", !open);
   questToggle.setAttribute("aria-expanded", String(open));
 }
-compact.addEventListener("change", () => { questsOpen = !compact.matches; layoutQuests(); });
+compact.addEventListener("change", () => { questsOpen = !compact.matches && !document.body.classList.contains('touch'); layoutQuests(); });
 questToggle.addEventListener("click", () => {
   questsOpen = !questsOpen;
+  if (questsOpen && document.body.classList.contains('touch')) { showLog(false); setMinimapHidden(true); showEmoteRow(false); }
   layoutQuests();
 });
 layoutQuests();
@@ -1903,6 +2020,8 @@ layoutQuests();
  * last one tells the Lawn nothing and still costs it, so a Mower that stands
  * still says so slowly. See "What a report costs" in CONTEXT.md.
  */
+let positionReports = new PositionReports();
+let sentMoving = false;
 let sendAt = 0, sentX = null, sentY = null, sentA = null;
 const bumps = [];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -1996,7 +2115,8 @@ function moveMower(dx, dy, now) {
  */
 function bite(lawnNow) {
   if (!mownAt || !regrowMs) return 0;
-  const nose = RADIUS * 1.1 * Math.sign(me.v || 1);
+  const direction = Math.sign(me.v || 1);
+  const nose = (MOWER_SCALE * (DECK_SIZE / 2 + DECK_OFFSET * direction) + 0.3) * direction;
   const ca = Math.cos(me.a), sa = Math.sin(me.a);
   let sum = 0, read = 0;
   for (const across of [-1.5, 0, 1.5]) {
@@ -2013,6 +2133,12 @@ function bite(lawnNow) {
 function drive(dt, lawnNow) {
   mowing *= Math.exp(-dt * 7);
   const now = performance.now();
+  // Collisions, drafting and drawing use the same peer positions this frame.
+  const renderTime = Date.now() + clockOffset - INTERP_DELAY;
+  for (const [id, p] of peers) {
+    if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
+    interpolatePeer(p, renderTime, dt);
+  }
   // A dazed Mower keeps its momentum and loses its controls. It is still
   // pushed by the Mower that hit it, and the blades are still down.
   const stunned = now < stunUntil;
@@ -2036,7 +2162,7 @@ function drive(dt, lawnNow) {
   const onRoad = (x, y) => roadAt(x, y, W, H);
   const road = onRoad(me.x, me.y);
   const motion = stepDrive(me, { throttle: fwd, turn, brake: held(' ') || touchBrake,
-    road, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onRoad), stunned,
+    street: road, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onRoad), stunned,
     rain: rainIntensityAt(lawnNow) }, dt);
   // The daze reads on the Mower itself, and not only in the Stars above it.
   if (stunned && !reducedMotion.matches) me.a += Math.sin(now * 0.021) * 1.3 * dt;
@@ -2047,10 +2173,7 @@ function drive(dt, lawnNow) {
 
   const px = me.x, py = me.y;
   moveMower(motion.vx * dt, motion.vy * dt, now);
-  drivePace.textContent = `${Math.round(Math.hypot(me.x - px, me.y - py) * rate)} tiles/s`;
-  driveMode.textContent = stunned ? 'Dazed' : motion.drifting ? 'Drifting' : (held(' ') || touchBrake) ? 'Braking'
-    : me.draft * road > 0.15 ? 'Slipstream' : road > 0.5 ? 'Country road' : 'Mowing';
-  draftMeter.value = me.draft * road;
+
 
   // Where the Mower is really going, which is not always where it is pointed
   // or how hard it is pushing: a Mower held against a bank or another Mower
@@ -2067,20 +2190,21 @@ function drive(dt, lawnNow) {
   // from the same message, so a Mower cannot name a start it never drove
   // from, and a Mower the Lawn has lost cuts nothing until the Lawn has seen
   // it again. The swath the Lawn cuts is a straight one between two reports,
-  // which at this rate is a tenth of the width of the Mower: the grass comes
+  // which at boosted speed is half the width of the Mower: the grass comes
   // off where the Mower drove. Your own Lawn is cut every frame regardless,
   // so nothing about the driving reads slower.
   if (connected && now - sendAt > SEND_MS) {
-    const news = me.x !== sentX || me.y !== sentY || me.a !== sentA;
+    const velocity = reportMotion((me.x - px) * rate, (me.y - py) * rate) ?? { vx: 0, vy: 0 };
+    const moving = Math.hypot(velocity.vx, velocity.vy) > 0.01;
+    if (!moving) velocity.vx = velocity.vy = 0;
+    const news = me.x !== sentX || me.y !== sentY || me.a !== sentA || moving !== sentMoving;
     if (news || now - sendAt > STILL_SEND_MS) {
-      send({ t: "mow", x: me.x, y: me.y, a: me.a });
+      send({ t: "mow", x: me.x, y: me.y, a: me.a, ...velocity, seq: positionReports.sent(me.x, me.y) });
+      sentMoving = moving;
       sentX = me.x; sentY = me.y; sentA = me.a; sendAt = now;
     }
   }
-  const renderTime = Date.now() + clockOffset - INTERP_DELAY;
-  for (const [id, p] of peers) {
-    if (now - p.seen > PEER_TIMEOUT) { peers.delete(id); lastContact.delete(id); continue; }
-    interpolatePeer(p, renderTime);
+  for (const p of peers.values()) {
     // Another Mower leans by what it is seen to do, which is all anybody
     // knows about it: the reports say where it was, and the weight follows.
     const speed = Math.hypot(p.vx ?? 0, p.vy ?? 0);
@@ -2099,33 +2223,22 @@ function blendAngle(a0, a1, k) {
                     Math.cos(a0) + (Math.cos(a1) - Math.cos(a0)) * k);
 }
 
-/**
- * Put a Mower where it was at renderTime, between the two reports that
- * bracket that moment. When the reports run out the Mower holds at the last
- * real one rather than guessing past it.
- */
-function interpolatePeer(p, renderTime) {
-  const buf = p.buf;
-  // Drop reports the render time has already passed, but keep the pair.
-  while (buf.length > 2 && buf[1].t <= renderTime) buf.shift();
-  const from = buf[0];
-  if (!from) return;
-  const to = buf[1];
-  // A Mower that is held at a report is a Mower with no report to drive to,
-  // so it counts as standing still: a bump needs to know which way the Mower
-  // that arrived was driving, and a report says where it was, not how fast.
-  if (!to || renderTime <= from.t) { p.x = from.x; p.y = from.y; p.a = from.a; p.vx = p.vy = 0; return; }
-  if (renderTime >= to.t) { p.x = to.x; p.y = to.y; p.a = to.a; p.vx = p.vy = 0; return; }
-  // Where it really went between the two reports it sits between, in Tiles a
-  // second. It is the way of the travel and not the way of the nose: a Mower
-  // that is pushed sideways points one way and moves another.
-  const span = (to.t - from.t) / 1000;
-  p.vx = (to.x - from.x) / span;
-  p.vy = (to.y - from.y) / span;
-  const k = (renderTime - from.t) / (to.t - from.t);
-  p.x = from.x + (to.x - from.x) * k;
-  p.y = from.y + (to.y - from.y) * k;
-  p.a = blendAngle(from.a, to.a, k);
+/** Predict briefly between reports, easing small network corrections. */
+function interpolatePeer(p, renderTime, dt) {
+  const target = samplePeer(p.buf, renderTime);
+  if (!target) return;
+  const k = 1 - Math.exp(-dt / 0.06);
+  const predictedX = p.x + (p.vx ?? 0) * dt;
+  const predictedY = p.y + (p.vy ?? 0) * dt;
+  const small = Math.hypot(target.x - predictedX, target.y - predictedY) < 5;
+  const x = small ? predictedX + (target.x - predictedX) * k : target.x;
+  const y = small ? predictedY + (target.y - predictedY) * k : target.y;
+  // Prediction must respect the same banks and trees as local driving.
+  [p.x, p.y] = stepAshore(p.x, p.y, x - p.x, y - p.y);
+  p.x = Math.max(COLLISION_RADIUS, Math.min(W - COLLISION_RADIUS, p.x));
+  p.y = Math.max(COLLISION_RADIUS, Math.min(H - COLLISION_RADIUS, p.y));
+  p.a = blendAngle(p.a, target.a, k);
+  p.vx = target.vx; p.vy = target.vy;
 }
 
 /**
@@ -2362,12 +2475,8 @@ fn growBlade(ii : u32) -> BladeData {
   let root = (cellIdx + jitter.xy) * cellSize;
 
   let r = hash4(root * 91.7);
-  // Sample the height a step away from the root, so blades straddle the edge
-  // of a cut instead of lining up along it. The step is mostly a coherent
-  // field, which makes clumps push into the path rather than lone spikes.
-  let wobble = vec2f(vnoise(root * 1.25) - 0.5, vnoise(root * 1.25 + 7.3) - 0.5) * 1.5
-             + (r.xy - vec2f(0.5)) * 0.45;
-  let h = hSmooth(root + wobble);
+  // Cut height follows the root; offset sampling cuts blades outside the deck.
+  let h = hSmooth(root);
 
   let verge = pathGrass(root);
   let density = lawnEdge(root) * verge;
@@ -2533,16 +2642,13 @@ fn vs_bake(@builtin(vertex_index) vi : u32) -> BakeOut {
 @fragment
 fn fs_bake(i : BakeOut) -> @location(0) vec4f { return groundStill(i.w); }
 
-fn groundColour(w : vec2f) -> vec3f {
+fn groundColour(w : vec2f, across : f32) -> vec3f {
   let still = textureSampleLevel(groundTex, fieldSamp,
     (w + vec2f(GROUND_MARGIN)) / (C.misc2.xy + 2.0 * GROUND_MARGIN), 0.0);
-  // Break both edges with noise, so neither the cut nor the border is a line.
+  // Keep texture on the ground without moving the edge of the cut.
   // Only the fine grain is still worked out per pixel; the rest is baked.
   let grain = (vnoise(w * 5.0) - 0.5) * 0.7 + (still.w - 0.5) * 1.3;
-  let h = hSmooth(w) * 0.5
-        + (hSmooth(w + vec2f(0.65, 0.0)) + hSmooth(w - vec2f(0.65, 0.0))
-        + hSmooth(w + vec2f(0.0, 0.65)) + hSmooth(w - vec2f(0.0, 0.65))) * 0.125
-        + grain * 0.08;
+  let h = hSmooth(w);
   let soil = vec3f(0.20, 0.40, 0.13);
   // A real lawn stripes because the deck lays the grass over. Same here.
   let stripe = 0.5 + 0.5 * cutSmooth(w).x;
@@ -2555,11 +2661,10 @@ fn groundColour(w : vec2f) -> vec3f {
   let worn = mix(dirt, vec3f(0.31, 0.34, 0.14), 0.6);
   col = mix(mix(dirt, worn, smoothstep(0.0, 0.5, verge)),
             col, smoothstep(0.35, 1.0, verge));
-  let across = roadDistance(w);
-  let road = 1.0 - smoothstep(ROAD_HALF_WIDTH - 0.4, ROAD_HALF_WIDTH + 0.8, across + grain * 0.35);
+  let street = 1.0 - smoothstep(STREET_HALF_WIDTH - 0.4, STREET_HALF_WIDTH + 0.8, across + grain * 0.35);
   let tracks = exp(-pow((across - 3.5) / 0.85, 2.0));
   let gravel = vec3f(0.49, 0.39, 0.25) * (1.0 + grain * 0.09 - tracks * 0.12);
-  col = mix(col, gravel, road);
+  col = mix(col, gravel, street);
   return mix(vec3f(0.38, 0.48, 0.24), col, still.y);
 }
 
@@ -2587,8 +2692,8 @@ fn vs_ground(@builtin(vertex_index) vi : u32) -> GOut {
 fn fs_ground(i : GOut) -> @location(0) vec4f {
   let w3 = vec3f(i.w.x, -0.015, i.w.y);
   var n = vec3f(0.0, 1.0, 0.0);
-  var base = groundColour(i.w);
   let place = placeAt(i.w);
+  var base = groundColour(i.w, place.w);
   let depth = place.y;
   let lit = fieldFlare(i.w, place.z);
   base = mix(base, vec3f(0.96, 0.88, 0.48), min(0.42, lit * 0.5));
@@ -2601,7 +2706,7 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
                       ripple(i.w + vec2f(0.0, e), C.misc.x) - h0) * (2.6 / e);
     n = normalize(mix(n, normalize(vec3f(-slope.x, 1.0, -slope.y)), wetness));
     // Shallow water keeps the colour of the bed; deep water loses it.
-    let deep = smoothstep(0.0, DITCH, depth);
+    let deep = smoothstep(0.0, WATER, depth);
     base = mix(base, mix(vec3f(0.22, 0.34, 0.28), vec3f(0.05, 0.15, 0.19), deep), wetness);
   }
   // The daze of the shadow map may only be read from uniform control flow,
@@ -3061,12 +3166,9 @@ function mowerMesh() {
         return centre.map((x, k) => x + r * (u[k] * Math.cos(angle) + v[k] * Math.sin(angle)));
       })), material);
   }
-  // The deck is as wide as the Mower is allowed to be — `COLLISION_RADIUS` is
-  // 0.85 of the scale — so the machine looks like something that could leave
-  // the swath behind it. The blades still overhang it by a third of a Tile
-  // either side, which is what a deck does.
-  body(0.05, 1.7, 1.7, [[0.19, 0.9], [0.24, 1], [0.36, 1], [0.47, 0.86]], 0);
-  body(0.05, 1.74, 1.74, [[0.18, 0.93], [0.24, 1]], 1);
+  // The blade radius and housing share these dimensions.
+  body(DECK_OFFSET, DECK_SIZE, DECK_SIZE, [[0.19, 0.9], [0.24, 1], [0.36, 1], [0.47, 0.86]], 0);
+  body(DECK_OFFSET, DECK_SIZE + 0.04, DECK_SIZE + 0.04, [[0.18, 0.93], [0.24, 1]], 1);
   body(-0.12, 0.8, 0.77, [[0.46, 1], [0.68, 0.94], [0.78, 0.72]], 1);
   tube([-0.12, 0.78, 0], [-0.12, 0.81, 0], 0.22, 3, 16);
   for (const x of [-0.57, 0.61]) for (const side of [-1, 1]) {
@@ -3725,7 +3827,7 @@ function drawWheelWake(cw, ch, dpr) {
         const grass = fieldAt(x, y, W, H) >= 0;
         const px = x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
         const py = y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0.103 + 1.3);
-        const bridge = DITCHES.some(([a, b]) => Math.hypot(
+        const bridge = WATERS.some(([a, b]) => Math.hypot(
           px - (SEEDS[a][0] + SEEDS[b][0]) * W / 2,
           py - (SEEDS[a][1] + SEEDS[b][1]) * H / 2) < BRIDGE + 2.6);
         if (!bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
@@ -4246,23 +4348,33 @@ const mapControls = document.getElementById('map-controls');
 const mapLocation = document.getElementById('map-location');
 const mapToggle = document.getElementById('map-toggle');
 let minimapHidden = false;
+function setMinimapHidden(hidden) {
+  minimapHidden = hidden;
+  const touch = document.body.classList.contains('touch');
+  mapControls.classList.toggle('collapsed', hidden);
+  document.body.classList.toggle('mobile-map-open', touch && !hidden);
+  mapToggle.textContent = touch ? 'Map' : hidden ? '⌃' : '⌄';
+  mapToggle.setAttribute('aria-expanded', String(!hidden));
+  mapToggle.setAttribute('aria-label', hidden ? 'Show minimap' : 'Hide minimap');
+}
 mapToggle.addEventListener('click', () => {
-  minimapHidden = !minimapHidden;
-  mapControls.classList.toggle('collapsed', minimapHidden);
-  mapToggle.textContent = minimapHidden ? '⌃' : '⌄';
-  mapToggle.setAttribute('aria-expanded', String(!minimapHidden));
-  mapToggle.setAttribute('aria-label', minimapHidden ? 'Show minimap' : 'Hide minimap');
+  if (minimapHidden && document.body.classList.contains('touch')) { showLog(false); showEmoteRow(false); }
+  setMinimapHidden(!minimapHidden);
 });
 
 function drawMap(cw, ch, dpr) {
   if (!mapReady()) return;
   // A phone held sideways runs out of height first, so cap against both.
-  const cornerW = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
+  const touch = document.body.classList.contains('touch');
+  const landscape = touch && innerHeight <= 560 && innerWidth >= 500;
+  const portraitRoom = Math.max(80, (innerHeight - safeBottom - 340 - safeTop) / 0.75);
+  const cornerW = touch ? Math.min(260, innerWidth - (landscape ? 300 : 24), innerHeight * 0.56, landscape ? Infinity : portraitRoom)
+    : Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
   const margin = 16;
   // Clear the home button bar, and the credit line that sits under the map.
-  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
-  const cornerLeft = cw / dpr - cornerW - margin;
-  const cornerTop = ch / dpr - cornerW * 0.75 - floor;
+  const floor = touch ? 164 + safeBottom : margin + safeBottom + (compact.matches ? 18 : 0);
+  const cornerLeft = touch ? (cw / dpr - cornerW) / 2 : cw / dpr - cornerW - margin;
+  const cornerTop = landscape ? (ch / dpr - cornerW * 0.75) / 2 - 10 : ch / dpr - cornerW * 0.75 - floor;
   const fromBottom = Math.round(cornerW * 0.75 + floor), fromRight = Math.round(cornerW + margin);
   if (fromBottom !== mapTop || fromRight !== mapSide) {
     mapTop = fromBottom; mapSide = fromRight;

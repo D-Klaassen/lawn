@@ -1,20 +1,29 @@
 import { treeAt, treeEarthAt, EARTH_RADIUS, TREES } from './trees.js';
-import { roadDistance, roadCentre, ROAD_HALF_WIDTH, ROAD_WGSL } from './road.js';
+import { ringDistance, STREET_HALF_WIDTH, RING_WGSL } from './road.js';
 
 /**
  * The map of the Lawn.
  *
- * One table of seeds says everything. A Field is the ground that lies nearer
- * its own seed than any other, so the Fields are parcels of an irregular
- * shape and not a grid of boxes. The seam between two Fields is a lane, and a
- * seam named in `DITCHES` carries water instead: a Ditch a Mower cannot
- * cross. Every Ditch is cut by one Bridge, at the middle point between the
- * two seeds it runs between, so no Field is ever shut off.
+ * One table of seeds says where the Fields are, and one table of seams says
+ * what lies between them. A Field is the ground that lies nearer its own seed
+ * than any other, so the Fields are parcels of an irregular shape and not a
+ * grid of boxes. The seam between two Fields is one of three things, and the
+ * three are the whole map:
+ *
+ * - a **Path**, bare earth that a Mower crosses at the speed it was going;
+ * - a **Street**, which a Mower drives fast on;
+ * - **Water**, which it cannot cross but at the Bridge that cuts it.
+ *
+ * A Street is a boundary and never a cut. Every Street is either a seam,
+ * which lies between two Fields by construction, or the ring, which lies
+ * outside all of them: ground the ring would take out of the middle of a
+ * parcel is verge, and not Field at all. So no Street splits a Field, and
+ * `scripts/check-map.mjs` is what says so on the day a seed moves.
  *
  * Everything here is a pure function of a point. Nothing is stored and
  * nothing is sent: the client, the shader and the Lawn each work out the same
- * map from the same table. `src/index.ts` holds a copy of `placeAt` for the
- * same reason the Growth Rate is copied there, and the two must stay
+ * map from the same two tables. `src/index.ts` holds a copy of `placeAt` for
+ * the same reason the Growth Rate is copied there, and the two must stay
  * identical or the two sides count different grass.
  */
 
@@ -34,20 +43,36 @@ export const SEEDS = [
   [0.17, 0.70], [0.335, 0.72], [0.50, 0.71], [0.665, 0.69], [0.83, 0.68],
 ];
 
-/** Half the width of a lane, in Tiles. Nothing grows on it. */
-export const LANE = 0.9;
-/** Half the width of open water, in Tiles. A Mower cannot enter it. */
-export const DITCH = 2.6;
-/** Bare bank between the water and the grass, in Tiles. */
+/** Half the width of a Path, in Tiles. Nothing grows on it. */
+export const PATH = 2.6;
+/** Half the width of open Water, in Tiles. A Mower cannot enter it. */
+export const WATER = 3.4;
+/** Bare bank between the Water and the grass, in Tiles. */
 export const BANK = 1.6;
-/** Radius of the Bridge that cuts every Ditch, in Tiles. */
+/** Radius of the Bridge that cuts every run of Water, in Tiles. */
 export const BRIDGE = 6;
 
 /**
- * The seams that carry water. Four of them: enough that a Mower has to read
- * the map and drive round, and little enough that the Lawn is still a lawn.
+ * What each seam is made of. A seam that is not named here is a Path.
+ *
+ * The Streets are every seam between the top row of Fields and the bottom
+ * row, so they read as one run of road the whole width of the Lawn, and it
+ * meets the ring at both ends. The Water lies within a row, which is what
+ * keeps a run of it a detour and not a wall.
  */
-export const DITCHES = [[0, 1], [1, 2], [2, 3], [4, 5], [5, 6], [6, 7], [7, 8]];
+export const SEAMS = {
+  '0,4': 'street', '0,5': 'street', '1,5': 'street', '1,6': 'street',
+  '2,6': 'street', '2,7': 'street', '3,7': 'street', '3,8': 'street',
+  '1,2': 'water', '5,6': 'water', '7,8': 'water',
+};
+
+function seamsOfKind(kind) {
+  return Object.keys(SEAMS).filter(key => SEAMS[key] === kind).map(key => key.split(',').map(Number));
+}
+
+/** The seams that carry Water. The client draws a Bridge at the middle of each. */
+export const WATERS = seamsOfKind('water');
+const STREETS = seamsOfKind('street');
 
 const SHORE_RADIUS = 1.2;
 
@@ -62,68 +87,112 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
 /**
  * Where a point stands on the Lawn.
  *
- * - `field` is the Field that owns it, or -1 for a lane, a bank or the water.
+ * - `field` is the Field that owns it, or -1 for a Path, a Street, a bank
+ *   or the Water.
  * - `wet` is how far it lies inside the water, in Tiles. It is negative on
  *   dry ground, so it is the room a Mower has left before it goes in.
+ * - `street` is how far it is from the nearest Street, measured inwards. It
+ *   is negative on a Street and past one, so it is the room a Field has left
+ *   before a Street would cut it.
  *
- * `edge` is half the difference between the two nearest seeds. It is about
- * the distance to the seam in Tiles, which is what the widths above measure.
+ * - `edge` is half the difference between the two nearest seeds. It is about
+ *   the distance to the seam in Tiles, which is what the widths above
+ *   measure, and it is what draws every Path.
  */
 export function placeAt(x, y, width, height) {
-  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
+  if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE, street: -BRIDGE, edge: 0 };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, d0 = Infinity, d1 = Infinity;
+  // The three nearest seeds, not the two. The third is what says where a seam
+  // ends, and a Street needs that as much as the Water does.
+  let first = 0, second = 0, third = 0;
+  let d0 = Infinity, d1 = Infinity, d2 = Infinity;
   const distances = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
     distances.push(d);
-    if (d < d0) { d1 = d0; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   const edge = (d1 - d0) * 0.5;
+  /** The nearest seed that is neither of these two. */
+  const beside = (a, b) => (first !== a && first !== b ? d0 : (second !== a && second !== b ? d1 : d2));
   let wet = -BRIDGE;
-  // One wander for the point, not one per Ditch: it depends on where the point
-  // is and not on which seam is being measured, and `placeAt` is read once per
-  // Tile of the Lawn on both sides.
+  // One wander for the point, not one per run of Water: it depends on where
+  // the point is and not on which seam is being measured, and `placeAt` is
+  // read once per Tile of the Lawn on both sides.
   const wander = shoreWander(x, y);
-  // Measure every ditch, even across a field boundary. Switching the nearest
-  // pair at a junction must not cut off the shoreline or its collision margin.
-  for (const [a, b] of DITCHES) {
+  // Measure every run of Water, even across a field boundary. Switching the
+  // nearest pair at a junction must not cut off the shoreline or its
+  // collision margin.
+  for (const [a, b] of WATERS) {
     const across = Math.abs(distances[a] - distances[b]) * 0.5;
     let third = Infinity;
     for (let k = 0; k < SEEDS.length; k++) {
       if (k !== a && k !== b) third = Math.min(third, distances[k]);
     }
-    // Leave a dry lane before the third field, with rounded bank corners.
-    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    const shore = water(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
+    // Leave a dry Path before the third field, with rounded bank corners.
+    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - PATH - BANK;
+    const shore = water(WATER + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
     const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
     const span2 = (px - bx) ** 2 + (py - by) ** 2;
     const along = Math.sqrt(Math.max(0, span2 - across * across));
     wet = Math.max(wet, water(shore, along - BRIDGE + wander));
   }
-  const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-  const road = roadDistance(x, y, width, height) - ROAD_HALF_WIDTH;
-  wet = Math.min(wet, road);
-  return { field: road <= 0 || edge <= lane || wet > -BANK || treeEarthAt(x, y, width, height) ? -1 : first, wet };
+  // The room left before the ring: it grows towards the middle of the Lawn,
+  // and is negative on the ring and past it, so the kerb is where a Field
+  // stops and the verge begins.
+  const kerb = -ringDistance(x, y, width, height);
+  // How far the point is from the nearest Street.
+  //
+  // It is measured against the seam itself and not against the nearest pair
+  // of seeds. Asking "does my nearest pair carry a Street" is a yes or a no,
+  // and the map read it once per point: the gravel stopped dead along the
+  // line where the second-nearest seed changes, which is a hard edge through
+  // open ground and a Mower that loses the Street mid-corner.
+  //
+  // A seam is live while its own two seeds are nearer than any third. Past
+  // the point where they are not — the junction where three Fields meet —
+  // the distance is taken to that junction instead of to the line, so a
+  // Street that ends rounds off over its own width. Before the junction the
+  // answer is the distance to the seam, exactly as it was.
+  let street = kerb;
+  for (const [a, b] of STREETS) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    const past = Math.max(0, (Math.max(distances[a], distances[b]) - beside(a, b)) * 0.5);
+    street = Math.min(street, Math.hypot(across, past));
+  }
+  // Nothing wet lies on a Street, or past the ring. This is safe only because
+  // the answer above is a real distance and not a choice between two: clamped
+  // on the old yes-or-no test, the shoreline gained a step where the
+  // second-nearest seed changes — an invisible bank a Mower stopped at.
+  wet = Math.min(wet, street - STREET_HALF_WIDTH);
+  const path = PATH + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  const bare = street <= STREET_HALF_WIDTH || edge <= path || wet > -BANK
+    || treeEarthAt(x, y, width, height);
+  return { field: bare ? -1 : first, wet, street, edge };
+}
+
+/** How much of a Street covers a point, from 0 to 1. */
+export function streetAt(x, y, width, height) {
+  return streetCover(placeAt(x, y, width, height).street);
+}
+
+/** A Street reads as one for the last 1.5 Tiles before its kerb. */
+export function streetCover(street) {
+  return Math.max(0, Math.min(1, (STREET_HALF_WIDTH - street) / 1.5));
 }
 
 /**
- * How far a point lies inside the water, from how far it is inside the Ditch
- * (`into`) and how far it is past the Bridge (`beyond`). Both are positive in
- * the water, and then the nearer bank is the answer. Outside, the answer is
- * the real distance to the corner where the Bridge meets the Ditch: the
- * smaller of the two on its own would call the dry Bridge wet, and seal it.
- */
-/**
- * How far the shoreline of a Ditch wanders from the straight, in Tiles.
+ * How far the shoreline of a run of Water wanders from the straight, in
+ * Tiles.
  *
- * Without it the water is a rectangle: `across` and `along` are the two sides
- * of a box drawn in the seam's own frame, and a box is what gets drawn. The
- * lane already wanders for the same reason, and the earth around a tree does
- * too. Three sines of the unwarped point, mean zero, so the Ditch keeps its
+ * Without it the Water is a rectangle: `across` and `along` are the two sides
+ * of a box drawn in the seam's own frame, and a box is what gets drawn. A
+ * Path already wanders for the same reason, and the earth around a tree does
+ * too. Three sines of the unwarped point, mean zero, so the Water keeps its
  * width on average and only its edge moves.
  */
 function shoreWander(x, y) {
@@ -132,18 +201,25 @@ function shoreWander(x, y) {
     + 0.16 * Math.sin(x * 0.47 + y * 0.39);
 }
 
+/**
+ * How far a point lies inside the Water, from how far it is inside the run
+ * (`into`) and how far it is past the Bridge (`beyond`). Both are positive in
+ * the Water, and then the nearer bank is the answer. Outside, the answer is
+ * the real distance to the corner where the Bridge meets the Water: the
+ * smaller of the two on its own would call the dry Bridge wet, and seal it.
+ */
 function water(into, beyond) {
   if (into > 0 && beyond > 0) return Math.min(into, beyond);
   const dx = Math.max(0, -into), dy = Math.max(0, -beyond);
   return -Math.sqrt(dx * dx + dy * dy);
 }
 
-/** Which Field a point belongs to, or -1 for a lane, a bank or the water. */
+/** Which Field a point belongs to, or -1 for a Path, a Street, a bank or the Water. */
 export function fieldAt(x, y, width, height) {
   return placeAt(x, y, width, height).field;
 }
 
-/** How far a point lies inside the water, in Tiles. Negative on dry ground. */
+/** How far a point lies inside the Water, in Tiles. Negative on dry ground. */
 export function wetAt(x, y, width, height) {
   return placeAt(x, y, width, height).wet;
 }
@@ -156,7 +232,7 @@ export function blocked(x, y, width, height, radius) {
 /**
  * Grass a Mower can stand on, as near as possible to the point it asked for.
  * It walks outwards in a spiral, so it always answers, and it answers the
- * same point on every screen. Grass and not a lane: a Mower that opens the
+ * same point on every screen. Grass and not a Path: a Mower that opens the
  * page on a Bridge is a Mower with nothing to cut.
  */
 export function dryStart(width, height, x = width / 2, y = height / 2, radius = 3) {
@@ -237,10 +313,10 @@ export function buildMapImage(width, height, done = [], scale = 2) {
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
       const wx = (x + 0.5) / scale, wy = (y + 0.5) / scale;
-      const { field, wet } = placeAt(wx, wy, width, height);
+      const { field, wet, street } = placeAt(wx, wy, width, height);
       let c;
       if (wet > 0) c = wet > 1.2 ? [52, 96, 128] : [78, 126, 152];
-      else if (roadDistance(wx, wy, width, height) < ROAD_HALF_WIDTH) c = [195, 171, 126];
+      else if (street <= STREET_HALF_WIDTH) c = [195, 171, 126];
       else if (field < 0) c = wet > -BANK ? [122, 104, 72] : [163, 138, 96];
       else c = greens[field];
       const i = (y * canvas.width + x) * 4;
@@ -252,16 +328,21 @@ export function buildMapImage(width, height, done = [], scale = 2) {
 }
 
 /**
- * The map, in the shader's own words. It is built from the table above, so
- * the ground a Mower drives on and the ground it sees are one map and cannot
- * drift apart. Only the fringe is the shader's own: a lane reads better with
- * a broken edge, and the water does not, because the water is where the
- * Mower stops.
+ * Where a point stands, in the shader's own words: everything `placeAt`
+ * needs and nothing else.
+ *
+ * It is built from the tables above, so the widths and the seams cannot drift
+ * from the ones the Lawn uses. The working is not built from anything — it is
+ * written twice, here and in JavaScript, and two hands write two answers.
+ * `public/check-shader.html` is what holds them to one: it runs this very
+ * string on the GPU and reads it against `placeAt` point by point. It is
+ * separated out so that check can compile it without the rest of the shader,
+ * which needs a lawn's worth of bindings to say anything at all.
  */
-export const MAP_WGSL = `
-${ROAD_WGSL}
-const LANE = ${LANE.toFixed(3)};
-const DITCH = ${DITCH.toFixed(3)};
+export const PLACE_WGSL = `
+${RING_WGSL}
+const PATH = ${PATH.toFixed(3)};
+const WATER = ${WATER.toFixed(3)};
 const BANK = ${BANK.toFixed(3)};
 const BRIDGE = ${BRIDGE.toFixed(3)};
 const SHORE_RADIUS = ${SHORE_RADIUS.toFixed(3)};
@@ -285,49 +366,82 @@ fn waterDepth(into : f32, beyond : f32) -> f32 {
   return -length(vec2f(max(0.0, -into), max(0.0, -beyond)));
 }
 
-/** x is the distance to the nearest seam, y the water depth, z the Field. */
-fn placeAt(p : vec2f) -> vec3f {
+/**
+ * x is the distance to the nearest seam, y the water depth, z the Field, and
+ * w the room left before the nearest Street. The last is negative on a Street
+ * and past one, which is what keeps a Street off the middle of a Field.
+ */
+fn placeAt(p : vec2f) -> vec4f {
   var seeds = array<vec2f, SEED_COUNT>(${SEEDS.map(([u, v]) => `vec2f(${u.toFixed(4)}, ${v.toFixed(4)})`).join(', ')});
   let q = warpPoint(p);
   var distances : array<f32, SEED_COUNT>;
   var first = 0;
+  var second = 0;
+  var third = 0;
   var d0 = 1e20;
   var d1 = 1e20;
+  var d2 = 1e20;
   for (var k = 0; k < SEED_COUNT; k = k + 1) {
     let d = length(q - seeds[k] * C.misc2.xy);
     distances[k] = d;
-    if (d < d0) { d1 = d0; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; }
+    if (d < d0) { d2 = d1; third = second; d1 = d0; second = first; d0 = d; first = k; }
+    else if (d < d1) { d2 = d1; third = second; d1 = d; second = k; }
+    else if (d < d2) { d2 = d; third = k; }
   }
   let edge = (d1 - d0) * 0.5;
   var wet = -BRIDGE;
   let wander = shoreWander(p);
-  let ditches = array<vec2i, ${DITCHES.length}>(${DITCHES.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
-  for (var i = 0; i < ${DITCHES.length}; i = i + 1) {
-    let a = ditches[i].x;
-    let b = ditches[i].y;
+  let waters = array<vec2i, ${WATERS.length}>(${WATERS.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
+  for (var i = 0; i < ${WATERS.length}; i = i + 1) {
+    let a = waters[i].x;
+    let b = waters[i].y;
     let across = abs(distances[a] - distances[b]) * 0.5;
     var third = 1e20;
     for (var k = 0; k < SEED_COUNT; k = k + 1) {
       if (k != a && k != b) { third = min(third, distances[k]); }
     }
-    let end = (third - max(distances[a], distances[b])) * 0.5 - LANE - BANK;
-    let shore = waterDepth(DITCH + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
+    let end = (third - max(distances[a], distances[b])) * 0.5 - PATH - BANK;
+    let shore = waterDepth(WATER + wander - across - SHORE_RADIUS, end + wander - SHORE_RADIUS) + SHORE_RADIUS;
     let mid = (seeds[a] + seeds[b]) * 0.5 * C.misc2.xy;
     let offset = q - mid;
     let along = sqrt(max(0.0, dot(offset, offset) - across * across));
     wet = max(wet, waterDepth(shore, along - BRIDGE + wander));
   }
-  wet = min(wet, roadDistance(p) - ROAD_HALF_WIDTH);
-  return vec3f(edge, wet, f32(first));
+  let kerb = -ringDistance(p);
+  // The same answer as the Street loop in this file: measured against the
+  // seam itself, so a Street that ends rounds off instead of stopping dead
+  // along the line where the second-nearest seed changes.
+  let streets = array<vec2i, ${STREETS.length}>(${STREETS.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
+  var street = kerb;
+  for (var i = 0; i < ${STREETS.length}; i = i + 1) {
+    let a = streets[i].x;
+    let b = streets[i].y;
+    var beside = d2;
+    if (first != a && first != b) { beside = d0; }
+    else if (second != a && second != b) { beside = d1; }
+    let across = abs(distances[a] - distances[b]) * 0.5;
+    let past = max(0.0, (max(distances[a], distances[b]) - beside) * 0.5);
+    street = min(street, length(vec2f(across, past)));
+  }
+  wet = min(wet, street - STREET_HALF_WIDTH);
+  return vec4f(edge, wet, f32(first), street);
 }
 
-/** 1 on the grass, 0 on a lane, a bank or the water. The verge is soft. */
+`;
+
+/**
+ * The map, in the shader's own words. Only the fringe is the shader's own: a
+ * Path reads better with a broken edge, and the water does not, because the
+ * water is where the Mower stops.
+ */
+export const MAP_WGSL = `
+${PLACE_WGSL}
+/** 1 on the grass, 0 on a Path, a Street, a bank or the Water. The verge is soft. */
 fn pathGrass(p : vec2f) -> f32 {
   let place = placeAt(p);
   let fringe = (vnoise(p * 1.2) - 0.5) * 0.7;
-  let lane = smoothstep(LANE, LANE + 0.8, place.x + fringe);
-  // The bank is bare to BANK Tiles from the water, the same answer placeAt
+  let path = smoothstep(PATH, PATH + 0.8, place.x + fringe);
+  // The bank is bare to BANK Tiles from the Water, the same answer placeAt
   // gives, and the grass then comes in over the same width as a verge.
   let bank = smoothstep(BANK, BANK + 1.8, -place.y + fringe);
   var earth = 1.0;
@@ -341,11 +455,11 @@ fn pathGrass(p : vec2f) -> f32 {
       + 0.18 * sin(angle * 5.0 - seed * 2.0) + 0.09 * sin(angle * 9.0 + seed)) * tree.z;
     earth = min(earth, smoothstep(edge, edge + 0.45, length(delta)));
   }
-  let road = smoothstep(ROAD_HALF_WIDTH, ROAD_HALF_WIDTH + 1.8, roadDistance(p) + fringe);
-  return min(min(min(lane, bank), earth), road);
+  let street = smoothstep(STREET_HALF_WIDTH, STREET_HALF_WIDTH + 1.8, place.w + fringe);
+  return min(min(min(path, bank), earth), street);
 }
 
-/** How far a point lies inside the water, in Tiles. Negative on dry ground. */
+/** How far a point lies inside the Water, in Tiles. Negative on dry ground. */
 fn waterAt(p : vec2f) -> f32 {
   return placeAt(p).y;
 }

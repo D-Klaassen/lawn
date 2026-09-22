@@ -1,26 +1,42 @@
 /**
  * Read the map the way a Mower does, and say whether it holds together.
  *
- * A Ditch that cannot be crossed is only fair while every Field can still be
+ * Water that cannot be crossed is only fair while every Field can still be
  * reached. This walks the Lawn from one dry Tile and reports what it could
- * not get to, along with how much of the Lawn is water, lane and grass.
+ * not get to, along with how much of the Lawn is Water, Path, Street and
+ * grass. It holds the map to three rules and fails if one of them breaks:
+ *
+ * - every Field is one piece, so no Street or run of Water splits a parcel.
+ *   A crumb smaller than the Slack is not a split: it is a Tile or two the
+ *   wander of a Path has pinched off, and the quest cannot notice it;
+ * - a Mower can reach every Tile of dry ground, and can cut all but a crumb
+ *   of every Field. The bank is narrower than a Mower is wide, so the odd
+ *   Tile of grass ends up in a pocket no Mower can enter; the Slack is what
+ *   says how many of those a quest can carry, and it is the same Slack the
+ *   tracker measures against;
+ * - no Tile is both wet and on a Street, which is what lets the shoreline
+ *   ignore the seams and stay continuous.
  *
  *     node scripts/check-map.mjs [width] [height]
  */
-import { FIELD_NAMES, placeAt, blocked } from '../public/fields.js';
+import { MOW_RADIUS, COLLISION_RADIUS } from '../public/mowing.js';
+import { FIELD_NAMES, FIELD_SLACK, placeAt, blocked } from '../public/fields.js';
+import { STREET_HALF_WIDTH } from '../public/road.js';
 
 const W = Number(process.argv[2] ?? 408);
 const H = Number(process.argv[3] ?? 272);
-const RADIUS = 2.6 * 0.85;   // COLLISION_RADIUS in the client
-const MOW = 2.6;             // MOW_RADIUS: a Mower cuts this far from itself
+const RADIUS = COLLISION_RADIUS;
+const MOW = MOW_RADIUS;
 
 const field = new Int8Array(W * H);
 const wet = new Float32Array(W * H);
+const street = new Uint8Array(W * H);
 const open = new Uint8Array(W * H);
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
   const place = placeAt(x + 0.5, y + 0.5, W, H);
   field[y * W + x] = place.field;
   wet[y * W + x] = place.wet;
+  street[y * W + x] = place.street <= STREET_HALF_WIDTH ? 1 : 0;
   open[y * W + x] = blocked(x + 0.5, y + 0.5, W, H, RADIUS) ? 0 : 1;
 }
 
@@ -60,29 +76,65 @@ for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
   }
 }
 
-const counts = FIELD_NAMES.map(() => ({ tiles: 0, reached: 0 }));
-let water = 0, bare = 0, grass = 0, cutOff = 0;
+const counts = FIELD_NAMES.map(() => ({ tiles: 0, reached: 0, first: -1 }));
+let water = 0, paved = 0, bare = 0, grass = 0, cutOff = 0, drowned = 0;
 for (let i = 0; i < W * H; i++) {
   if (wet[i] > 0) water++;
+  else if (street[i]) paved++;
   else if (field[i] < 0) bare++;
   else {
     grass++;
-    counts[field[i]].tiles++;
-    if (mowable[i]) counts[field[i]].reached++;
+    const one = counts[field[i]];
+    one.tiles++;
+    if (one.first < 0) one.first = i;
+    if (mowable[i]) one.reached++;
   }
+  // A Street is dry by construction. If one is not, the shoreline has a step
+  // in it, because `placeAt` only clamps the Water on the ring.
+  if (wet[i] > 0 && street[i]) drowned++;
   if (open[i] && !seen[i]) cutOff++;
 }
+
+/**
+ * A Field is one piece. This is the rule a Street has to obey: it may run
+ * along a parcel, and it may not run through one.
+ */
+function pieceOf(id, from) {
+  const piece = new Uint8Array(W * H);
+  const stack = [from];
+  piece[from] = 1;
+  let size = 0;
+  while (stack.length) {
+    const i = stack.pop();
+    size++;
+    const x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const j = ny * W + nx;
+      if (piece[j] || field[j] !== id) continue;
+      piece[j] = 1;
+      stack.push(j);
+    }
+  }
+  return size;
+}
+const split = counts.map(({ tiles, first }, id) => tiles - (first < 0 ? 0 : pieceOf(id, first)));
 
 const total = W * H;
 console.log(`Lawn ${W} x ${H} = ${total} Tiles`);
 console.log(`  grass ${grass} (${(100 * grass / total).toFixed(1)}%)`);
-console.log(`  lane and bank ${bare} (${(100 * bare / total).toFixed(1)}%)`);
+console.log(`  path, verge and bank ${bare} (${(100 * bare / total).toFixed(1)}%)`);
+console.log(`  street ${paved} (${(100 * paved / total).toFixed(1)}%)`);
 console.log(`  water ${water} (${(100 * water / total).toFixed(1)}%)`);
 console.log(`  dry ground a Mower cannot reach: ${cutOff} Tiles`);
+console.log(`  wet Tiles on a Street: ${drowned}`);
 for (const [i, name] of FIELD_NAMES.entries()) {
   const { tiles, reached } = counts[i];
   const share = tiles ? (100 * reached / tiles).toFixed(1) : '0.0';
-  console.log(`  ${name.padEnd(18)} ${String(tiles).padStart(6)} Tiles, ${share}% mowable`);
+  const cut = split[i] ? `, ${split[i]} off the main piece` : '';
+  const pocket = tiles - reached ? `, ${tiles - reached} in a pocket` : '';
+  console.log(`  ${name.padEnd(18)} ${String(tiles).padStart(6)} Tiles, ${share}% mowable${cut}${pocket}`);
 }
 
 // A picture of it, one character per few Tiles.
@@ -96,3 +148,22 @@ for (let y = 0; y < H; y += step * 2) {
   picture += '\n';
 }
 console.log(picture);
+
+const broken = [];
+if (cutOff) broken.push(`${cutOff} Tiles of dry ground a Mower cannot reach`);
+if (drowned) broken.push(`${drowned} wet Tiles on a Street`);
+for (const [i, name] of FIELD_NAMES.entries()) {
+  if (split[i] > counts[i].tiles * FIELD_SLACK) {
+    broken.push(`${name} is split: ${split[i]} Tiles are off its main piece, which is more than the Slack`);
+  }
+  const pocket = counts[i].tiles - counts[i].reached;
+  if (pocket > counts[i].tiles * FIELD_SLACK) {
+    broken.push(`${name} has ${pocket} Tiles of grass a Mower cannot cut, which is more than the Slack`);
+  }
+}
+if (broken.length) {
+  console.error('The map does not hold together:');
+  for (const line of broken) console.error(`  ${line}`);
+  process.exit(1);
+}
+console.log('The map holds together.');
