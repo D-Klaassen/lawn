@@ -11,6 +11,7 @@
     "build:driving": "esbuild src/road.ts src/driving.ts src/positions.ts src/mowing.ts --bundle --format=esm --outdir=public",
     "build:weather": "esbuild src/weather.ts --bundle --format=esm --outdir=public",
     "test:driving": "npm run build:driving && node scripts/check-driving.mjs",
+    "test:drift": "npm run build:driving && npm run build:achievements && node scripts/check-drift.mjs",
     "test:weather": "npm run build:weather && npm run build:driving && node scripts/check-weather.mjs",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
