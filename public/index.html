@@ -1032,6 +1032,9 @@ function receiveBall(message) {
         message.rollX, message.rollY, message.n].every(Number.isFinite)) return;
   ball = { ...message };
   if (!ballVisual) ballVisual = { ...ball };
+  // The Lawn owns the hit, so the Bonk rides in with the ball and everyone on
+  // the field hears the same one, not only the Mower that swung at it.
+  if (Number.isFinite(message.bonk)) mowerSound.bonk(message.bonk);
   ballReceivedAt = performance.now();
   ballFrameAt = ballReceivedAt;
   // Predict only a short distance; stale connections must not launch a ghost ball.
