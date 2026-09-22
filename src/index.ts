@@ -415,13 +415,20 @@ const BUMP_STALE_MS = 1000;
  */
 const DRIFT_SPEED = 6;
 /**
- * How far one Mow Stroke's heading may bend from the last one's, in radians,
- * before it counts as a drift and not an ordinary corner. The Lawn never sees
- * the tyres, only the swath they left, so a drift here is a sharp turn taken
- * at speed — the shape a slide leaves on the ground — and not the client's
- * word for what its own wheels were doing.
+ * How far a Mower's nose must lie off the way it is actually travelling, in
+ * radians, before it counts as a drift and not an ordinary corner. This is
+ * what a slide is: the wheels stop taking the Mower where they point, so the
+ * nose leads the swath. Steering alone cannot open that gap — the hardest
+ * corner the drive model allows without breaking traction slips 0.15, and a
+ * slide runs from 0.6 to 1.2 — so the bar sits in the space between them.
  */
-const DRIFT_TURN = 0.5;
+const DRIFT_SLIP = 0.3;
+/**
+ * How far the swath must bend across one Mow Stroke, in radians, for the slip
+ * to be a corner being taken and not a nose held crooked on a straight. It is
+ * small on purpose: it asks only that the Mower is going somewhere round.
+ */
+const DRIFT_BEND = 0.02;
 /** How long a gap between two Mow Strokes may be and still be one movement, and not two unrelated ones. */
 const DRIFT_STALE_MS = 1000;
 /**
@@ -542,6 +549,14 @@ function tidy(value: number, places = 4): number {
   return Math.round(value * scale) / scale;
 }
 
+/**
+ * The shortest way round between two angles, from -PI to PI. Two headings a
+ * hair either side of due west are a hair apart, not a whole turn apart.
+ */
+function wrapAngle(radians: number): number {
+  return Math.atan2(Math.sin(radians), Math.cos(radians));
+}
+
 /** What a Score has done, in the shape the Achievement table reads. */
 function tallyOf(score: Score): Tally {
   return {
@@ -594,8 +609,8 @@ export class Lawn extends DurableObject {
    * Mower the Lawn has lost says where it starts and cuts nothing.
    */
   private places = new WeakMap<WebSocket, Place>();
-  /** The heading and moment of a Mower's last Mow Stroke, for `sawDrift`. */
-  private lastHeading = new WeakMap<WebSocket, { dx: number; dy: number; at: number }>();
+  /** The direction and moment of a Mower's last Mow Stroke, for `sawDrift`. */
+  private lastSwath = new WeakMap<WebSocket, { dx: number; dy: number; at: number }>();
   /**
    * How much travel each Mower has left, by Mower Key and not by socket.
    * Windows are free and hands are not, so ten tabs on one Key drive one
@@ -819,7 +834,7 @@ export class Lawn extends DurableObject {
       // client that claims a mile gets as far as its travel allows, and the
       // ladder is measured on the near end of that.
       const drove = Math.hypot(to.x - from.x, to.y - from.y);
-      const drifted = this.sawDrift(ws, from, to, drove);
+      const drifted = this.sawDrift(ws, from, to, drove, a);
       if (key) this.credit(ws, key, name, blades, drove, drifted);
       // A Field can only be finished by grass coming off it, so this is the
       // one moment worth looking.
@@ -1274,35 +1289,45 @@ export class Lawn extends DurableObject {
   }
 
   /**
-   * Whether one Mow Stroke bent sharply enough off the last one, at speed, to
-   * be a drift and not an ordinary corner.
+   * Whether this Mow Stroke was cut sideways, at speed, and so was a drift and
+   * not an ordinary corner.
    *
-   * The Lawn never runs the Mower's own physics and so never sees a slide for
-   * itself the way it sees a swath. What it can see is the shape the swath
-   * left: a slide swings the Mower's heading away from where it was pointed a
-   * moment before, faster than steering alone turns it, and it does that
-   * while still carrying speed. So the Lawn reads the heading of this Mow
-   * Stroke against the heading of the last one, both worked out from the
-   * ground actually covered and never from anything the Mower says about its
-   * own wheels, and asks whether the bend between them is sharp enough, and
-   * whether the Mower was going fast enough, to be that shape.
+   * The Lawn never runs the Mower's own physics and so never sees the tyres
+   * let go. What it can see is that a sliding Mower stops going where it is
+   * pointed: the swath is the ground the Lawn itself drove the Mower over, and
+   * the nose is the heading that same Mow Stroke already carries for drawing
+   * it, so the angle between them costs nothing to read and is exactly what a
+   * slide opens up. Steering alone cannot open it — the wheels take the Mower
+   * where they point until they break away.
    *
-   * It always remembers this Mow Stroke's heading for the next one, whether
+   * Three things are asked, and a drift is all three at once. The nose must
+   * lie `DRIFT_SLIP` off the swath. The swath must bend `DRIFT_BEND` across
+   * the stroke, so a nose held crooked down a straight is not a drift. And the
+   * bend must run the same way the nose is turned, because a Mower slides
+   * with its nose inside the corner and never outside it. The last two are
+   * what a Mower would have to forge together, while genuinely driving fast
+   * over real grass, to claim a drift it did not do.
+   *
+   * It always remembers this Mow Stroke's direction for the next one, whether
    * or not this one drifted, so two ordinary corners taken back to back are
    * read against each other and not against whatever drift happened earlier.
+   * A Mower too old to send a heading never drifts: the Lawn cannot see a
+   * nose it was not told about, and it will not guess one.
    */
-  private sawDrift(ws: WebSocket, from: Place, to: Place, drove: number): boolean {
+  private sawDrift(ws: WebSocket, from: Place, to: Place, drove: number, nose: number): boolean {
     if (drove <= 0) return false;
     const now = Date.now();
     const dx = (to.x - from.x) / drove, dy = (to.y - from.y) / drove;
-    const last = this.lastHeading.get(ws);
-    this.lastHeading.set(ws, { dx, dy, at: now });
-    if (!last) return false;
+    const last = this.lastSwath.get(ws);
+    this.lastSwath.set(ws, { dx, dy, at: now });
+    if (!last || !Number.isFinite(nose)) return false;
     const gap = now - last.at;
     if (gap <= 0 || gap >= DRIFT_STALE_MS) return false;
-    const speed = drove / (gap / 1000);
-    const turn = Math.acos(Math.max(-1, Math.min(1, dx * last.dx + dy * last.dy)));
-    return speed >= DRIFT_SPEED && turn >= DRIFT_TURN;
+    if (drove / (gap / 1000) < DRIFT_SPEED) return false;
+    const slip = wrapAngle(nose - Math.atan2(dy, dx));
+    const bend = wrapAngle(Math.atan2(dy, dx) - Math.atan2(last.dy, last.dx));
+    return Math.abs(slip) >= DRIFT_SLIP && Math.abs(bend) >= DRIFT_BEND
+      && Math.sign(slip) === Math.sign(bend);
   }
 
   /**

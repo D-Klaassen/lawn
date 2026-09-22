@@ -828,18 +828,37 @@ told about, and the ladder climbs a little slower than the Stars on the screen
 do. The ladders are short for that reason.
 
 A drift is a third hole, and a different shape from the other two: the Lawn
-never runs the Mower's own physics, so it never sees a slide the way it sees a
-Bump's closing speed, and there is nothing here to relay on trust the way a
-daze is. So the Lawn reads the shape a slide leaves on the ground instead. Two
-Mow Strokes taken back to back give a heading each, worked out from the ground
-actually covered and not from anything the Mower says about its own wheels; a
-slide swings that heading round faster than steering alone does, so a sharp
-bend between them, taken above `DRIFT_SPEED`, is read as a drift and credited
-to `g`. It is a shape a hard corner can also leave, so this counts some
-cornering that was never a slide at all — a smaller hole than the other two,
-because nothing but a ladder of stars rides on it, and closing it all the way
-would cost the Lawn a copy of the client's own tyre physics for a thing that
-changes no Score.
+never runs the Mower's own physics, so it never sees the tyres let go the way
+it sees a Bump's closing speed, and there is nothing here to relay on trust the
+way a daze is. What it can see is that a sliding Mower stops going where it is
+pointed. The swath is ground the Lawn itself drove the Mower over, and the nose
+is the heading that same Mow Stroke already carries for drawing it, so the
+angle between the two costs nothing to read and is exactly what a slide opens
+up. Steering alone cannot open it: the wheels take the Mower where they point
+until they break away. The hardest corner the drive model allows without losing
+traction slips 0.15 radians, a real slide runs from 0.6 to 1.2, and
+`DRIFT_SLIP` sits at 0.3, in the space between them.
+
+Three things are asked at once, above `DRIFT_SPEED`, and the third is what
+keeps the hole small. The nose must lie `DRIFT_SLIP` off the swath. The swath
+must bend `DRIFT_BEND` across the stroke, so a nose held crooked down a
+straight is nothing. And the bend must run the same way the nose is turned,
+because a Mower slides with its nose inside the corner and never outside it. A
+Mower that wanted a drift it had not done would have to forge all three
+together while genuinely driving fast over real grass — which pays the Score
+anyway. A Mower too old to send a heading never drifts, because the Lawn will
+not guess a nose it was not told about.
+
+This was got wrong once, and how it was wrong is worth keeping. The first
+version read the bend between two Mow Strokes on its own and asked for 0.5
+radians of it. The drive model caps steering at 3 radians a second and a Mow
+Stroke is 100 ms, so a swath can bend 0.3 at the very most: the bar stood above
+everything the physics could reach and the Achievement could not be earned at
+all. Tests either side of it passed, because the Lawn was consistent with
+itself and the drive model was consistent with itself. `check-drift` drives the
+real drive model into the real Lawn for that reason, and fails both ways — if a
+genuine slide earns nothing, and if a corner that never lost traction earns
+something.
 
 An Emote cannot be made honest at all, so nothing is hung on one.
 

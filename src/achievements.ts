@@ -72,10 +72,10 @@ export const DRIVE_STEPS = [1000, 10000, 100000, 500000];
  */
 export const BUMP_STEPS = [5, 40, 200];
 /**
- * Blades cut while drifting, for each step of the ladder. Held to the Mower's
- * own word: the Lawn sees the blades come off, but a drift is a thing the
- * tyres do, not the grass, so nothing here checks it independently the way a
- * Bump is checked.
+ * Blades cut while drifting, for each step of the ladder. Checked the way a
+ * Bump is checked: the Lawn reads the Mower's nose against the swath it drove
+ * and counts the blades only while the two disagree, so a drift is a thing the
+ * Lawn saw and not a thing a Mower claimed. See `sawDrift`.
  */
 export const DRIFT_STEPS = [200, 4000, 40000, 200000];
 

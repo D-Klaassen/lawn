@@ -134,7 +134,7 @@ const bundled = await build({entryPoints:['src/index.ts'],bundle:true,write:fals
 const { Lawn } = await import('data:text/javascript;base64,' + Buffer.from(bundled.outputFiles[0].text).toString('base64'));
 function lawn() {
   const game = Object.create(Lawn.prototype);
-  Object.assign(game, {places:new WeakMap(),lastHeading:new WeakMap(),travelBudgets:new Map(),budgets:new WeakMap(),scores:new Map(),strokes:0,
+  Object.assign(game, {places:new WeakMap(),lastSwath:new WeakMap(),travelBudgets:new Map(),budgets:new WeakMap(),scores:new Map(),strokes:0,
     trackBallMower(){},tell(){},schedulePersist(){},watchFields(){},mow(){return 0;},resync(){},
     messages:[],broadcast(raw){this.messages.push(JSON.parse(raw));}});
   return game;
