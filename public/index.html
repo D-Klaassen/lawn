@@ -2062,6 +2062,12 @@ function bump(id, x, y, now, closing) {
   if (now - previous < 350 || closing < BUMP_SPEED) return;
   bumps.push({ x, y, born: now });
   if (bumps.length > 12) bumps.shift();
+  // Both Mowers measure the same contact and so both hear it, the same way
+  // both daze themselves. The Lawn is not asked: unlike the Ball, which it
+  // owns, a Bump is already worked out on the screens it happened on.
+  // A ram at `STUN_SPEED` sits near half force, so a daze is loud but a
+  // head-on at speed is louder still.
+  mowerSound.bump((closing - BUMP_SPEED) / 12);
   if (closing < STUN_SPEED || now < stunReadyAt) return;
   stunUntil = now + STUN_MS;
   stunReadyAt = stunUntil + STUN_GRACE_MS;

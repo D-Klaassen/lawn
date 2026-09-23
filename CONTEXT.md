@@ -1090,6 +1090,26 @@ the limiter rather than the master gain: the master follows the Mower and sits
 at zero whenever it is parked, and a ball you sent rolling goes on bonking
 about after you have stopped.
 
+## A Bump is heard where it is felt
+
+A Bump makes the heavy noise, and it is played on the screens the contact
+happened on rather than relayed from the Lawn. That is the opposite of the
+Ball, and for the opposite reason: the Lawn owns the Ball and is the only
+thing that knows it was struck, while both Mowers in a Bump already measure
+the same contact and each daze themselves on it. Asking the Lawn would be
+asking it to repeat what both screens have already worked out. A Mower
+standing off to one side therefore does not hear it, the same way the Bump
+was never its event to begin with.
+
+It is voiced apart from the Ball. A ball is hollow and rings at about 180 Hz;
+two steel decks meeting are weight and no note, so the deck dives an octave and
+a half inside the first fifty milliseconds and then sits at about 50 Hz while
+it rings out. Where the pitch lands is stated in Hz and not as a fraction of
+where it started: taken as a fraction it falls with the force as well, and a
+light knock ends up under 30 Hz, which is not a quiet sound but no sound at
+all on the speakers most people are on. Force moves how loud and how long a
+Bump is, and never how deep it is beyond what a speaker can still carry.
+
 ## The board wears the medals
 
 Every name on the board carries a star with a number in it: how many

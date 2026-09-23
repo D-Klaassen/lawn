@@ -132,47 +132,74 @@ export function createMowerSound(button) {
     if (audio) void audio.context.suspend().catch(() => {});
   });
 
+  /**
+   * One struck thing. A sine dropped fast through its own pitch is what a
+   * struck shell sounds like, and the noise over the front of it is whatever
+   * arrived. `force` runs 0 to 1, and a nudge has to stay a nudge: it is the
+   * only thing telling you how hard the two things met.
+   *
+   * A Ball and a steel deck are the same event and not the same sound, so they
+   * differ in pitch, in how long they ring and in how much of the noise you
+   * hear — not in what builds them.
+   */
+  function knock(force, voice) {
+    if (muted || document.hidden || !audio || audio.context.state !== 'running') return;
+    const { context, knocks, noiseBuffer } = audio;
+    const now = context.currentTime;
+    const hit = Math.max(0, Math.min(1, force));
+    const at = ([base, span]) => base + hit * span;
+    const ring = at(voice.ring);
+    // One ball and one deck are struck over and over, so the pitch has to
+    // wander. Held fixed, a rally reads as one recording played twice.
+    const top = at(voice.top) * (0.93 + Math.random() * 0.14);
+    const shell = context.createOscillator();
+    shell.type = 'sine';
+    shell.frequency.setValueAtTime(top, now);
+    shell.frequency.exponentialRampToValueAtTime(at(voice.floor), now + ring * (voice.sweep ?? 1));
+    const shellGain = context.createGain();
+    shellGain.gain.setValueAtTime(0.0001, now);
+    shellGain.gain.linearRampToValueAtTime(at(voice.level), now + 0.005);
+    shellGain.gain.exponentialRampToValueAtTime(0.0001, now + ring);
+    shell.connect(shellGain).connect(knocks);
+    shell.start(now);
+    shell.stop(now + ring + 0.02);
+    const slap = context.createBufferSource();
+    slap.buffer = noiseBuffer;
+    const band = context.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = at(voice.band);
+    band.Q.value = voice.q;
+    const slapGain = context.createGain();
+    slapGain.gain.setValueAtTime(at(voice.slap), now);
+    slapGain.gain.exponentialRampToValueAtTime(0.0001, now + voice.click);
+    slap.connect(band).connect(slapGain).connect(knocks);
+    // A fresh window of the same noise each time, or the click is one sample.
+    slap.start(now, Math.random() * 1.5, voice.click + 0.02);
+  }
+  // Each pair is [what a nudge gives, what a full-force hit adds]. `sweep` is
+  // how much of the ring the pitch takes to fall: at 1 the tone is still
+  // sliding as it fades, and well under 1 it lands early and sits there.
+  //
+  // `floor` is where the pitch lands, in Hz, and is stated outright rather
+  // than as a fraction of the top. Taken as a fraction it falls with force
+  // too, and a light knock ends up under 30 Hz — which is not a quiet sound
+  // but no sound at all on the speakers most people are on.
+  const BALL = { top: [186, 108], floor: [60, 34], ring: [0.1, 0.14], level: [0.16, 0.38],
+    band: [1000, 1600], q: 0.85, slap: [0.07, 0.15], click: 0.045 };
+  // Two decks are the heavy one. The pitch dives an octave and a half inside
+  // the first fifty milliseconds and then holds down there while it rings out,
+  // which is the whole of why a bonk lands as weight rather than as a click.
+  // The floor drops a little as the hit hardens, because a heavier collision
+  // ought to sound deeper, but never so far that it leaves the speaker behind.
+  const DECK = { top: [150, 130], floor: [56, -10], sweep: 0.26, ring: [0.19, 0.23],
+    level: [0.2, 0.46], band: [900, 1800], q: 1.0, slap: [0.1, 0.22], click: 0.05 };
+
   return {
     cut(amount) { harvest += amount; },
-    /**
-     * The Bonk: a sine dropped fast through its own pitch is what a struck
-     * hollow shell sounds like, and the noise over the front of it is the deck
-     * arriving. `force` runs 0 to 1, and a nudge has to stay a nudge: it is the
-     * only thing telling you how well you caught the ball.
-     */
-    bonk(force) {
-      if (muted || document.hidden || !audio || audio.context.state !== 'running') return;
-      const { context, knocks, noiseBuffer } = audio;
-      const now = context.currentTime;
-      const hit = Math.max(0, Math.min(1, force));
-      const ring = 0.1 + hit * 0.14;
-      // One ball is hit over and over, so the pitch has to wander. Held fixed,
-      // a rally reads as one recording played twice rather than two hits.
-      const top = (186 + hit * 108) * (0.93 + Math.random() * 0.14);
-      const shell = context.createOscillator();
-      shell.type = 'sine';
-      shell.frequency.setValueAtTime(top, now);
-      shell.frequency.exponentialRampToValueAtTime(top * 0.32, now + ring);
-      const shellGain = context.createGain();
-      shellGain.gain.setValueAtTime(0.0001, now);
-      shellGain.gain.linearRampToValueAtTime(0.16 + hit * 0.38, now + 0.005);
-      shellGain.gain.exponentialRampToValueAtTime(0.0001, now + ring);
-      shell.connect(shellGain).connect(knocks);
-      shell.start(now);
-      shell.stop(now + ring + 0.02);
-      const slap = context.createBufferSource();
-      slap.buffer = noiseBuffer;
-      const band = context.createBiquadFilter();
-      band.type = 'bandpass';
-      band.frequency.value = 1000 + hit * 1600;
-      band.Q.value = 0.85;
-      const slapGain = context.createGain();
-      slapGain.gain.setValueAtTime(0.07 + hit * 0.15, now);
-      slapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
-      slap.connect(band).connect(slapGain).connect(knocks);
-      // A fresh window of the same noise each time, or the click is one sample.
-      slap.start(now, Math.random() * 1.5, 0.06);
-    },
+    /** The Ball, struck: hollow, and still ringing after the deck has gone. */
+    bonk(force) { knock(force, BALL); },
+    /** Two decks meeting: heavier, and over almost before it began. */
+    bump(force) { knock(force, DECK); },
     update(speed, dt, active) {
       // Harvest is accumulated over the frame, so load does not depend on frame rate.
       const target = active ? harvest / Math.max(0.001, dt) : 0;
